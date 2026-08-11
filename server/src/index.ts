@@ -1,5 +1,6 @@
 import { networkInterfaces } from 'node:os';
 import { createApp } from './app.js';
+import { createStore } from './db/index.js';
 import { HCAPTCHA_TEST_SITEKEY, loadConfig } from './config.js';
 
 // .env é opcional: sem ele o servidor sobe com as chaves públicas de teste
@@ -12,11 +13,13 @@ try {
 const config = loadConfig();
 
 let bundle: ReturnType<typeof createApp>;
+let store: Awaited<ReturnType<typeof createStore>>;
 try {
-  bundle = createApp({ config });
+  // chave malformada, Postgres inacessível ou migração quebrada são erros de
+  // configuração: falhar no boot é melhor que descobrir na primeira gravação
+  store = await createStore(config);
+  bundle = createApp({ config, store });
 } catch (error) {
-  // chave malformada é erro de configuração: falhar no boot é melhor que
-  // descobrir na primeira gravação, com dados já em memória
   console.error(`\n  [erro de configuração] ${(error as Error).message}\n`);
   process.exit(1);
 }
@@ -32,7 +35,9 @@ const server = app.listen(config.port, config.host, () => {
   console.log(`  API  ........ http://${lanIp}:${config.port}`);
   console.log(`  modo hCaptcha ${config.captcha.mode}`);
   console.log(`  sitekey ..... ${config.captcha.sitekey}`);
-  console.log(`  storage ..... ${config.dataFile ?? 'memória'}`);
+  console.log(
+    `  storage ..... ${store.kind}${store.kind === 'json' ? ` (${config.dataFile})` : ''}`,
+  );
   console.log(`  amostras p/ cadastro: ${config.enrollment.samplesRequired}`);
   console.log(
     `  autenticação  ${auth.enabled ? `${auth.keyHashes.length} chave(s) de API` : 'ABERTA'}`,
@@ -45,9 +50,9 @@ const server = app.listen(config.port, config.host, () => {
         `          lista pessoas. Defina API_KEYS para fechar (openssl rand -hex 24).`,
     );
   }
-  if (!encryptionEnabled && config.dataFile) {
+  if (!encryptionEnabled && store.kind !== 'memory') {
     console.log(
-      `\n  [aviso] templates biométricos gravados EM CLARO em ${config.dataFile}.\n` +
+      `\n  [aviso] templates biométricos gravados EM CLARO no storage (${store.kind}).\n` +
         `          Dado biométrico é sensível na LGPD e não se "reseta" como senha.\n` +
         `          Defina TEMPLATE_ENCRYPTION_KEY (openssl rand -base64 32).`,
     );
@@ -64,6 +69,9 @@ const server = app.listen(config.port, config.host, () => {
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    server.close(() => process.exit(0));
+    server.close(() => {
+      // fecha o pool do Postgres antes de sair, senão o processo fica pendurado
+      void store.close().finally(() => process.exit(0));
+    });
   });
 }

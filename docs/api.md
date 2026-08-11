@@ -29,13 +29,13 @@ curl -s localhost:8787/healthz
 ```json
 {
   "ok": true, "featureVersion": 1, "captchaMode": "mock", "users": 3, "uptimeSec": 41,
-  "authRequired": true, "encryptionAtRest": true
+  "storage": "postgres", "authRequired": true, "encryptionAtRest": true
 }
 ```
 
-Única rota que nunca exige chave. `authRequired` e `encryptionAtRest` existem para o cliente
-mostrar o estado real da instalação — o app usa isso para avisar quando os templates estão sendo
-gravados em claro.
+Única rota que nunca exige chave. `authRequired`, `encryptionAtRest` e `storage`
+(`json` | `memory` | `postgres`) existem para o cliente mostrar o estado real da instalação — o app
+usa isso para avisar quando os templates estão sendo gravados em claro.
 
 ## `GET /v1/config`
 

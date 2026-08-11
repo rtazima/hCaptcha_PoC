@@ -14,7 +14,8 @@ convicção religiosa. Isso é o ponto de partida, e traz três consequências i
 2. **Finalidade específica.** Template coletado para autenticação não pode ser reaproveitado
    para perfilamento, analytics ou treinamento de modelo sem nova base legal.
 3. **Direito à eliminação** (art. 18). Precisa existir caminho para apagar o template — nesta
-   PoC é `DELETE /v1/users/:id`, e ele apaga amostras e template juntos.
+   PoC é `DELETE /v1/users/:id`, que apaga amostras e template juntos e **anula** o `user_id` na
+   trilha de auditoria: a decisão fica registrada, sem apontar para ninguém.
 
 Vale registrar que a discussão sobre **biometria comportamental** é mais nova que a sobre
 face/digital, e há leitura de que padrão de digitação e de gesto se enquadram como biométricos
@@ -44,7 +45,7 @@ Se essa afirmação for material para o seu DPO, peça confirmação por escrito
 
 | dado | onde | forma |
 |---|---|---|
-| amostras e templates | `server/data/db.json` | **AES-256-GCM** com `TEMPLATE_ENCRYPTION_KEY`; **texto claro** sem ela |
+| amostras e templates | `server/data/db.json` ou Postgres | **AES-256-GCM** com `TEMPLATE_ENCRYPTION_KEY`; **texto claro** sem ela |
 | tokens do hCaptcha já usados | mesmo arquivo | SHA-256 (nunca em claro — há teste) |
 | trilha de auditoria | mesmo arquivo | últimos 500 eventos |
 | eventos crus da captura | **descartados** | só o vetor de 45 features é gravado |
@@ -72,9 +73,9 @@ O que continua pendente, em ordem de urgência:
    do texto, data e hora.
 4. **Política de retenção** com prazo definido e expurgo automático. "Guardar para sempre"
    não sobrevive ao art. 15.
-5. **Trocar JSON por banco** com controle de acesso, log de acesso e backup cifrado. Atenção:
-   backup de base cifrada sem a chave é backup inútil — e com a chave ao lado, é vazamento em
-   dobro.
+5. **Configurar o banco direito.** O Postgres já é suportado (`DATABASE_URL`), mas falta
+   controle de acesso por papel, log de acesso e backup cifrado. Atenção: backup de base cifrada
+   sem a chave é backup inútil — e com a chave ao lado, é vazamento em dobro.
 6. **Não usar `userId` identificável.** Prefira pseudônimo com o de-para em outro sistema, para
    que um vazamento do template não venha com o nome ao lado.
 7. **Relatório de impacto (RIPD)** — art. 38. Para dado sensível em escala é praticamente

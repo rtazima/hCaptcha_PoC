@@ -79,7 +79,7 @@ export function createNullSealer(): Sealer {
     },
     open: () => {
       throw new CryptoConfigError(
-        'há dados cifrados no arquivo, mas nenhuma chave configurada. ' +
+        'há dados biométricos cifrados no storage, mas nenhuma chave configurada. ' +
           'Defina TEMPLATE_ENCRYPTION_KEY com a mesma chave usada para gravar.',
       );
     },
@@ -118,7 +118,7 @@ export function createSealer(rawKey: string | null | undefined): Sealer {
         // Não há como distinguir os dois casos, e é bom que não haja.
         throw new SealedDataError(
           'não foi possível decifrar os dados biométricos: a chave está errada ou ' +
-            `o arquivo foi alterado (${(error as Error).message})`,
+            `o dado foi alterado (${(error as Error).message})`,
         );
       }
       return JSON.parse(plaintext.toString('utf8')) as T;

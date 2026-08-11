@@ -11,6 +11,8 @@ export interface AppConfig {
   port: number;
   host: string;
   dataFile: string | null;
+  /** definido => usa Postgres em vez do arquivo JSON */
+  databaseUrl: string | null;
   corsOrigin: string;
   captcha: {
     mode: CaptchaMode;
@@ -66,6 +68,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: num(env.PORT, 8787),
     host: env.HOST ?? '0.0.0.0',
     dataFile: env.DATA_FILE === 'memory' ? null : (env.DATA_FILE ?? 'data/db.json'),
+    databaseUrl: env.DATABASE_URL?.trim() || null,
     corsOrigin: env.CORS_ORIGIN ?? '*',
     captcha: {
       mode,

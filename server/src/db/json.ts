@@ -1,17 +1,23 @@
 /**
- * Persistência do PoC: JSON em disco (ou memória pura nos testes).
+ * Persistência em arquivo JSON (ou memória pura, quando `filePath` é null).
  *
- * Deliberadamente sem banco: a PoC precisa ser inspecionável (`cat data/db.json`)
- * e rodar sem dependência nativa. A interface `Store` é o ponto de troca para
- * Postgres/Redis num piloto — nada acima dela conhece o formato do arquivo.
+ * É o default da PoC de propósito: `cat data/db.json` mostra o estado inteiro,
+ * não precisa de serviço externo e não tem dependência nativa. Para piloto
+ * existe `PostgresStore`, atrás da mesma interface.
+ *
+ * Limite conhecido: `consumeSession` não é atômico entre processos. Num único
+ * processo Node o event loop serializa a leitura-e-escrita, então na PoC o
+ * antirreplay funciona; com duas instâncias servindo a mesma pasta, não. Essa é
+ * uma das razões para o Postgres num piloto — lá a operação é um único UPDATE
+ * condicional.
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   FEATURE_VERSION,
-  type FeatureVector,
   type CorpusStats,
+  type FeatureVector,
   computeCorpusStats,
   emptyCorpusStats,
 } from '../biometrics/features.js';
@@ -23,42 +29,16 @@ import {
   type Sealer,
   createNullSealer,
 } from '../crypto/atRest.js';
-
-export interface StoredSample {
-  sampleId: string;
-  createdAt: string;
-  task: string;
-  vector: FeatureVector;
-  quality: QualityReport;
-}
-
-export interface UserRecord {
-  userId: string;
-  displayName: string | null;
-  createdAt: string;
-  updatedAt: string;
-  samples: StoredSample[];
-  template: BiometricTemplate | null;
-}
-
-export interface CaptureSession {
-  sessionId: string;
-  createdAt: string;
-  expiresAt: string;
-  consumedAt: string | null;
-}
-
-export interface AuditEvent {
-  eventId: string;
-  at: string;
-  kind: 'enroll' | 'verify' | 'identify' | 'reset';
-  userId: string | null;
-  decision: string | null;
-  similarity: number | null;
-  risk: number | null;
-  reasons: string[];
-  detail?: Record<string, unknown>;
-}
+import {
+  type AuditEvent,
+  type CaptureSession,
+  type ConsumeSessionResult,
+  MAX_EVENTS,
+  MAX_TOKENS,
+  type Store,
+  type StoredSample,
+  type UserRecord,
+} from './types.js';
 
 /**
  * Formato em disco. Os campos biométricos podem estar cifrados (`sealedVector`,
@@ -100,24 +80,24 @@ export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-const MAX_EVENTS = 500;
-const MAX_TOKENS = 5000;
-
-export class Store {
+export class JsonStore implements Store {
   private users = new Map<string, UserRecord>();
   private sessions = new Map<string, CaptureSession>();
   private usedTokens = new Map<string, string>();
   private events: AuditEvent[] = [];
   private statsCache: CorpusStats | null = null;
 
+  readonly kind: 'json' | 'memory';
+
   constructor(
     private readonly filePath: string | null = null,
     private readonly sealer: Sealer = createNullSealer(),
   ) {
+    this.kind = filePath ? 'json' : 'memory';
     if (this.filePath) this.load();
   }
 
-  // -- ciclo de vida -------------------------------------------------------
+  // -- serialização --------------------------------------------------------
 
   /** Reconstitui uma amostra do disco, decifrando se necessário. */
   private readSample(sample: DiskSample): StoredSample | null {
@@ -225,7 +205,22 @@ export class Store {
     renameSync(tmp, this.filePath);
   }
 
-  reset(): void {
+  /**
+   * Cópia defensiva. O Postgres devolve objetos novos a cada leitura; devolver
+   * a referência interna aqui deixaria as duas implementações com semânticas
+   * diferentes — e um `push` acidental de quem chama corromperia o estado.
+   */
+  private static copyUser(user: UserRecord): UserRecord {
+    return {
+      ...user,
+      samples: user.samples.map((sample) => ({ ...sample })),
+      template: user.template ? { ...user.template } : null,
+    };
+  }
+
+  // -- ciclo de vida -------------------------------------------------------
+
+  async reset(): Promise<void> {
     this.users.clear();
     this.sessions.clear();
     this.usedTokens.clear();
@@ -234,9 +229,13 @@ export class Store {
     this.persist();
   }
 
+  async close(): Promise<void> {
+    // nada a liberar: escrita é síncrona
+  }
+
   // -- sessões de captura --------------------------------------------------
 
-  createSession(ttlMs: number): CaptureSession {
+  async createSession(ttlMs: number): Promise<CaptureSession> {
     const now = Date.now();
     const session: CaptureSession = {
       sessionId: randomUUID(),
@@ -249,8 +248,7 @@ export class Store {
     return session;
   }
 
-  /** Marca a sessão como usada. Retorna o motivo da recusa, ou null se ok. */
-  consumeSession(sessionId: string): { ok: true } | { ok: false; reason: string } {
+  async consumeSession(sessionId: string): Promise<ConsumeSessionResult> {
     const session = this.sessions.get(sessionId);
     if (!session) return { ok: false, reason: 'session_unknown' };
     if (session.consumedAt) return { ok: false, reason: 'session_already_used' };
@@ -262,26 +260,29 @@ export class Store {
 
   // -- tokens hCaptcha -----------------------------------------------------
 
-  isTokenUsed(token: string): boolean {
+  async isTokenUsed(token: string): Promise<boolean> {
     return this.usedTokens.has(hashToken(token));
   }
 
-  markTokenUsed(token: string): void {
+  async markTokenUsed(token: string): Promise<void> {
     this.usedTokens.set(hashToken(token), new Date().toISOString());
     this.persist();
   }
 
   // -- usuários ------------------------------------------------------------
 
-  getUser(userId: string): UserRecord | undefined {
-    return this.users.get(userId);
+  async getUser(userId: string): Promise<UserRecord | undefined> {
+    const user = this.users.get(userId);
+    return user ? JsonStore.copyUser(user) : undefined;
   }
 
-  listUsers(): UserRecord[] {
-    return [...this.users.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  async listUsers(): Promise<UserRecord[]> {
+    return [...this.users.values()]
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((user) => JsonStore.copyUser(user));
   }
 
-  ensureUser(userId: string, displayName?: string | null): UserRecord {
+  async ensureUser(userId: string, displayName?: string | null): Promise<UserRecord> {
     const existing = this.users.get(userId);
     if (existing) {
       if (displayName != null && displayName !== existing.displayName) {
@@ -289,7 +290,7 @@ export class Store {
         existing.updatedAt = new Date().toISOString();
         this.persist();
       }
-      return existing;
+      return JsonStore.copyUser(existing);
     }
     const now = new Date().toISOString();
     const created: UserRecord = {
@@ -302,10 +303,13 @@ export class Store {
     };
     this.users.set(userId, created);
     this.persist();
-    return created;
+    return JsonStore.copyUser(created);
   }
 
-  addSample(userId: string, sample: Omit<StoredSample, 'sampleId' | 'createdAt'>): StoredSample {
+  async addSample(
+    userId: string,
+    sample: Omit<StoredSample, 'sampleId' | 'createdAt'>,
+  ): Promise<StoredSample> {
     const user = this.users.get(userId);
     if (!user) throw new Error(`usuário desconhecido: ${userId}`);
     const stored: StoredSample = {
@@ -317,10 +321,10 @@ export class Store {
     user.updatedAt = stored.createdAt;
     this.statsCache = null;
     this.persist();
-    return stored;
+    return { ...stored };
   }
 
-  trimSamples(userId: string, maxSamples: number): void {
+  async trimSamples(userId: string, maxSamples: number): Promise<void> {
     const user = this.users.get(userId);
     if (!user || user.samples.length <= maxSamples) return;
     user.samples = user.samples.slice(-maxSamples);
@@ -328,7 +332,7 @@ export class Store {
     this.persist();
   }
 
-  setTemplate(userId: string, template: BiometricTemplate | null): void {
+  async setTemplate(userId: string, template: BiometricTemplate | null): Promise<void> {
     const user = this.users.get(userId);
     if (!user) throw new Error(`usuário desconhecido: ${userId}`);
     user.template = template;
@@ -336,25 +340,31 @@ export class Store {
     this.persist();
   }
 
-  deleteUser(userId: string): boolean {
+  async deleteUser(userId: string): Promise<boolean> {
     const removed = this.users.delete(userId);
     if (removed) {
+      // a decisão fica na auditoria, mas desligada da pessoa: o direito à
+      // eliminação (LGPD art. 18) não deve exigir apagar a trilha de decisões
+      for (const event of this.events) {
+        if (event.userId === userId) event.userId = null;
+      }
       this.statsCache = null;
       this.persist();
     }
     return removed;
   }
 
-  /** Galeria 1:N: usuários com template pronto. */
-  gallery(): UserRecord[] {
-    return this.listUsers().filter((u) => u.template != null);
+  async gallery(): Promise<UserRecord[]> {
+    return (await this.listUsers()).filter((u) => u.template != null);
   }
 
+  // -- estatística do corpus ----------------------------------------------
+
   /**
-   * Estatística do corpus (escala + pesos de discriminabilidade), com cache.
+   * Escala + pesos de discriminabilidade, com cache.
    * Agrupada por pessoa porque os pesos comparam variação intra x inter pessoa.
    */
-  corpusStats(): CorpusStats {
+  async corpusStats(): Promise<CorpusStats> {
     if (this.statsCache) return this.statsCache;
     const perUser: FeatureVector[][] = [];
     for (const user of this.users.values()) {
@@ -366,7 +376,7 @@ export class Store {
 
   // -- auditoria -----------------------------------------------------------
 
-  appendEvent(event: Omit<AuditEvent, 'eventId' | 'at'>): AuditEvent {
+  async appendEvent(event: Omit<AuditEvent, 'eventId' | 'at'>): Promise<AuditEvent> {
     const stored: AuditEvent = {
       eventId: randomUUID(),
       at: new Date().toISOString(),
@@ -375,10 +385,13 @@ export class Store {
     this.events.push(stored);
     if (this.events.length > MAX_EVENTS) this.events = this.events.slice(-MAX_EVENTS);
     this.persist();
-    return stored;
+    return { ...stored };
   }
 
-  listEvents(limit = 50): AuditEvent[] {
-    return this.events.slice(-limit).reverse();
+  async listEvents(limit = 50): Promise<AuditEvent[]> {
+    return this.events
+      .slice(-limit)
+      .reverse()
+      .map((event) => ({ ...event }));
   }
 }

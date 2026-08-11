@@ -13,7 +13,7 @@ import { writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../app.js';
 import { loadConfig } from '../config.js';
-import { Store } from '../db/store.js';
+import { JsonStore } from '../db/json.js';
 import type {
   EnrollResponse,
   IdentifyResponse,
@@ -151,7 +151,7 @@ async function main() {
   });
 
   if (!baseUrl) {
-    const { app } = createApp({ config, store: new Store(null) });
+    const { app } = createApp({ config, store: new JsonStore(null) });
     const server = await new Promise<import('node:http').Server>((resolve) => {
       const s = app.listen(0, '127.0.0.1', () => resolve(s));
     });

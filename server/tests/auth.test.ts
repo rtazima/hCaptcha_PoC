@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
-import { Store } from '../src/db/store.js';
+import { JsonStore } from '../src/db/json.js';
 import {
   AuthConfigError,
   MIN_KEY_LENGTH,
@@ -90,7 +90,7 @@ describe('isAuthorized', () => {
 describe('API com autenticação ligada', () => {
   function harness(keys: string) {
     const config = loadConfig({ HCAPTCHA_MODE: 'mock', DATA_FILE: 'memory', API_KEYS: keys });
-    return createApp({ config, store: new Store(null) });
+    return createApp({ config, store: new JsonStore(null) });
   }
 
   it('/healthz continua aberto e anuncia que há autenticação', async () => {
@@ -141,14 +141,14 @@ describe('API com autenticação ligada', () => {
 
   it('recusa subir com chave curta em vez de aceitar silenciosamente', () => {
     const config = loadConfig({ HCAPTCHA_MODE: 'mock', DATA_FILE: 'memory', API_KEYS: 'abc' });
-    expect(() => createApp({ config, store: new Store(null) })).toThrow(AuthConfigError);
+    expect(() => createApp({ config, store: new JsonStore(null) })).toThrow(AuthConfigError);
   });
 });
 
 describe('API sem autenticação (default da PoC)', () => {
   it('segue aberta e diz isso no /healthz', async () => {
     const config = loadConfig({ HCAPTCHA_MODE: 'mock', DATA_FILE: 'memory' });
-    const { app, auth } = createApp({ config, store: new Store(null) });
+    const { app, auth } = createApp({ config, store: new JsonStore(null) });
     expect(auth.enabled).toBe(false);
 
     const { body } = await request(app).get('/healthz').expect(200);

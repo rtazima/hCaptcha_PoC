@@ -1,0 +1,32 @@
+# Postgres para a PoC, para quem não tem um local.
+#
+#   docker compose up -d
+#   export DATABASE_URL=postgres://hcaptcha_poc:poc_local_dev@127.0.0.1:5433/hcaptcha_poc
+#   npm run dev
+#
+# Porta 5433 de propósito: não briga com um Postgres já instalado na 5432.
+# As credenciais são de desenvolvimento e estão no arquivo por conveniência —
+# em qualquer ambiente compartilhado, troque e tire do versionamento.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hcaptcha-poc-postgres
+    environment:
+      POSTGRES_USER: hcaptcha_poc
+      POSTGRES_PASSWORD: poc_local_dev
+      POSTGRES_DB: hcaptcha_poc
+    ports:
+      - '5433:5432'
+    volumes:
+      - poc-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # o servidor aplica as migrações no boot, então esperar o banco ficar
+      # pronto evita um "connection refused" na primeira subida
+      test: ['CMD-SHELL', 'pg_isready -U hcaptcha_poc -d hcaptcha_poc']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  poc-pgdata:

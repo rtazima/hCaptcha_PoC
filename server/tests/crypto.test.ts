@@ -12,7 +12,7 @@ import {
   isSealed,
   parseKey,
 } from '../src/crypto/atRest.js';
-import { Store } from '../src/db/store.js';
+import { JsonStore } from '../src/db/json.js';
 import { buildTemplate } from '../src/biometrics/template.js';
 import { FEATURE_COUNT, FEATURE_VERSION, type FeatureVector } from '../src/biometrics/features.js';
 import type { QualityReport } from '../src/biometrics/contract.js';
@@ -86,10 +86,29 @@ describe('sealer', () => {
   it('detecta adulteração do ciphertext (GCM autentica)', () => {
     const sealed = sealer.seal({ saldo: 100 });
     const parts = sealed.split('.');
-    // vira um bit do último caractere do ciphertext
-    const alvo = parts[3];
-    parts[3] = alvo.slice(0, -1) + (alvo.at(-1) === 'A' ? 'B' : 'A');
+    // vira um bit em um byte real do ciphertext. Mexer no último caractere
+    // base64 não serve: os bits de padding são ignorados na decodificação e o
+    // resultado pode ser byte a byte idêntico.
+    const bytes = Buffer.from(parts[3], 'base64url');
+    bytes[0] ^= 0x01;
+    parts[3] = bytes.toString('base64url');
     expect(() => sealer.open(parts.join('.'))).toThrow(SealedDataError);
+  });
+
+  it('detecta adulteração da tag de autenticação e do IV', () => {
+    const sealed = sealer.seal({ saldo: 100 });
+
+    const comTagTrocada = sealed.split('.');
+    const tag = Buffer.from(comTagTrocada[2], 'base64url');
+    tag[0] ^= 0x01;
+    comTagTrocada[2] = tag.toString('base64url');
+    expect(() => sealer.open(comTagTrocada.join('.'))).toThrow(SealedDataError);
+
+    const comIvTrocado = sealed.split('.');
+    const iv = Buffer.from(comIvTrocado[1], 'base64url');
+    iv[0] ^= 0x01;
+    comIvTrocado[1] = iv.toString('base64url');
+    expect(() => sealer.open(comIvTrocado.join('.'))).toThrow(SealedDataError);
   });
 
   it('recusa formato desconhecido', () => {
@@ -114,17 +133,17 @@ describe('sealer nulo (sem chave)', () => {
   });
 });
 
-describe('Store com cifra em repouso', () => {
-  function popular(store: Store) {
-    store.ensureUser('u1', 'Ana');
-    store.addSample('u1', { task: 'enroll-1', vector: vector(1.2345), quality });
-    store.addSample('u1', { task: 'enroll-2', vector: vector(2.3456), quality });
-    store.setTemplate('u1', buildTemplate([vector(1.2345), vector(2.3456)]));
+describe('JsonStore com cifra em repouso', () => {
+  async function popular(store: JsonStore) {
+    await store.ensureUser('u1', 'Ana');
+    await store.addSample('u1', { task: 'enroll-1', vector: vector(1.2345), quality });
+    await store.addSample('u1', { task: 'enroll-2', vector: vector(2.3456), quality });
+    await store.setTemplate('u1', buildTemplate([vector(1.2345), vector(2.3456)]));
   }
 
-  it('não deixa vetor nem template legíveis no arquivo', () => {
+  it('não deixa vetor nem template legíveis no arquivo', async () => {
     const file = tempFile();
-    popular(new Store(file, createSealer(keyB64)));
+    await popular(new JsonStore(file, createSealer(keyB64)));
 
     const raw = readFileSync(file, 'utf8');
     expect(raw).not.toContain('1.2345');
@@ -142,49 +161,49 @@ describe('Store com cifra em repouso', () => {
     expect(disco.users[0].samples[0].vector).toBeUndefined();
   });
 
-  it('relê os dados com a mesma chave', () => {
+  it('relê os dados com a mesma chave', async () => {
     const file = tempFile();
-    popular(new Store(file, createSealer(keyB64)));
+    await popular(new JsonStore(file, createSealer(keyB64)));
 
-    const reaberto = new Store(file, createSealer(keyB64));
-    const user = reaberto.getUser('u1')!;
+    const reaberto = new JsonStore(file, createSealer(keyB64));
+    const user = (await reaberto.getUser('u1'))!;
     expect(user.displayName).toBe('Ana');
     expect(user.samples).toHaveLength(2);
     expect(user.samples[0].vector.values[0]).toBeCloseTo(1.2345, 6);
-    expect(reaberto.gallery()).toHaveLength(1);
+    expect(await reaberto.gallery()).toHaveLength(1);
     expect(user.template!.centroid[0]).toBeCloseTo((1.2345 + 2.3456) / 2, 6);
   });
 
-  it('falha alto com a chave errada, em vez de devolver base vazia', () => {
+  it('falha alto com a chave errada, em vez de devolver base vazia', async () => {
     const file = tempFile();
-    popular(new Store(file, createSealer(keyB64)));
-    expect(() => new Store(file, createSealer(outraChave))).toThrow(SealedDataError);
+    await popular(new JsonStore(file, createSealer(keyB64)));
+    expect(() => new JsonStore(file, createSealer(outraChave))).toThrow(SealedDataError);
   });
 
-  it('falha com mensagem útil quando a chave desaparece da configuração', () => {
+  it('falha com mensagem útil quando a chave desaparece da configuração', async () => {
     const file = tempFile();
-    popular(new Store(file, createSealer(keyB64)));
-    expect(() => new Store(file)).toThrow(/TEMPLATE_ENCRYPTION_KEY/);
+    await popular(new JsonStore(file, createSealer(keyB64)));
+    expect(() => new JsonStore(file)).toThrow(/TEMPLATE_ENCRYPTION_KEY/);
   });
 
-  it('lê base antiga em claro e a converte ao gravar (migração sem script)', () => {
+  it('lê base antiga em claro e a converte ao gravar (migração sem script)', async () => {
     const file = tempFile();
-    popular(new Store(file)); // grava em claro, schema 2 sem cifra
+    await popular(new JsonStore(file)); // grava em claro, schema 2 sem cifra
     expect(readFileSync(file, 'utf8')).toContain('1.2345');
 
-    const migrando = new Store(file, createSealer(keyB64));
-    expect(migrando.getUser('u1')!.samples).toHaveLength(2);
+    const migrando = new JsonStore(file, createSealer(keyB64));
+    expect((await migrando.getUser('u1'))!.samples).toHaveLength(2);
 
     // qualquer escrita já persiste cifrado
-    migrando.ensureUser('u2', 'Bruno');
+    await migrando.ensureUser('u2', 'Bruno');
     const raw = readFileSync(file, 'utf8');
     expect(raw).not.toContain('1.2345');
     expect(raw).toContain('sealedVector');
   });
 
-  it('mantém o arquivo em claro quando não há chave', () => {
+  it('mantém o arquivo em claro quando não há chave', async () => {
     const file = tempFile();
-    popular(new Store(file));
+    await popular(new JsonStore(file));
     const disco = JSON.parse(readFileSync(file, 'utf8'));
     expect(disco.encryption).toBe('none');
     expect(disco.users[0].samples[0].vector.values[0]).toBeCloseTo(1.2345, 6);

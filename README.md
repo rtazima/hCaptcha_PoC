@@ -112,6 +112,41 @@ observadas. Recalibre com dados reais: `MATCH_MIDPOINT` e `MATCH_STEEPNESS` defi
 dos scores, e limiar fora de escala é a forma mais comum de um piloto biométrico parecer
 quebrado sem estar.
 
+## Persistência: arquivo ou Postgres
+
+O default segue sendo um arquivo JSON, porque `cat server/data/db.json` mostra o estado inteiro e
+não precisa de serviço externo. Definir `DATABASE_URL` troca para Postgres, sem nenhuma outra
+mudança:
+
+```bash
+docker compose up -d          # Postgres na porta 5433 (não briga com um local na 5432)
+export DATABASE_URL=postgres://hcaptcha_poc:poc_local_dev@127.0.0.1:5433/hcaptcha_poc
+npm run dev                   # migrações aplicam no boot
+```
+
+Para pipelines que migram antes de trocar as instâncias, há `npm run db:migrate` no pacote do
+servidor. O runner é idempotente e usa advisory lock, então subir duas instâncias ao mesmo tempo
+não aplica a mesma migração duas vezes.
+
+A escolha é do ambiente, não do código: acima da interface `Store` nada sabe qual está em uso
+(`/healthz` reporta em `storage`). O schema fica em `server/src/db/migrations/*.sql`, aplicado por
+um runner de ~40 linhas com advisory lock — o ativo é o SQL, que se porta para Flyway,
+node-pg-migrate ou o que vocês já usem.
+
+Duas coisas ficam **melhores** no Postgres, e é por isso que ele existe aqui:
+
+- `consumeSession` vira um único `UPDATE` condicional, atômico de verdade. No arquivo, o
+  antirreplay da captura só vale porque há um processo só; com duas instâncias, não valeria.
+- Apagar uma pessoa (LGPD art. 18) roda em transação: as amostras vão por `ON DELETE CASCADE` e a
+  auditoria fica, com `user_id` nulo. A trilha de decisões sobrevive sem apontar para ninguém.
+
+**A mesma bateria de testes roda nas duas implementações** (`store-contract.test.ts`). Sem
+`DATABASE_URL_TEST` os testes de Postgres são pulados, não falham:
+
+```bash
+DATABASE_URL_TEST=postgres://hcaptcha_poc:poc_local_dev@127.0.0.1:5433/hcaptcha_poc_test npm test
+```
+
 ## Segurança (o que já está no código)
 
 Duas coisas que o doc de privacidade listava como bloqueadores para sair do laboratório já estão
@@ -144,12 +179,13 @@ O ponto de troca para o esquema de autenticação de vocês (JWT, gateway, mTLS)
 ## Qualidade
 
 ```bash
-npm run check      # typecheck do backend e do app + 149 testes
+npm run check      # typecheck do backend e do app + 197 testes
 ```
 
-- **149 testes** (vitest) cobrindo extração de features, template, matching, motor de decisão,
-  cliente do `/siteverify` (com `fetch` dublado), persistência, cifra em repouso, autenticação e
-  a API inteira via supertest.
+- **197 testes** (vitest) cobrindo extração de features, template, matching, motor de decisão,
+  cliente do `/siteverify` (com `fetch` dublado), cifra em repouso, autenticação, a API inteira
+  via supertest e uma **suíte de contrato de persistência que roda nas duas implementações**
+  (arquivo e Postgres).
 - O app foi **empacotado com o Metro** (`npx expo export`) para garantir que resolve e compila
   de verdade — foi isso que revelou que o `@hcaptcha/react-native-hcaptcha@4.1.0` importa
   `prop-types` sem declarar a dependência (por isso ela está explícita no `mobile/package.json`).
@@ -182,8 +218,9 @@ npm run check      # typecheck do backend e do app + 149 testes
 5. **Biometria comportamental muda com o contexto** — em pé, deitado, apressado, com a outra
    mão. Isso aparece como aumento de FRR. É por isso que a decisão tem `step_up` em vez de só
    allow/deny, e por isso existe (desligada por padrão) a adaptação incremental do template.
-6. **Armazenamento é um arquivo JSON** (`server/data/db.json`), proposital para a PoC ser
-   inspecionável. A interface `Store` é o ponto de troca para Postgres.
+6. **O default é arquivo JSON**, proposital para a PoC ser inspecionável — e nesse modo
+   `consumeSession` não é atômico entre processos. Para piloto use `DATABASE_URL` (veja
+   *Persistência*).
 7. **Autenticação e cifra vêm desligadas por padrão.** Existem e são testadas (veja
    *Segurança*), mas sem `API_KEYS` a API está aberta a quem estiver na mesma rede, e sem
    `TEMPLATE_ENCRYPTION_KEY` os templates ficam em claro. Ligue as duas antes de coletar dado de
@@ -197,5 +234,5 @@ npm run check      # typecheck do backend e do app + 149 testes
 3. Coleta piloto com ~30 pessoas × ~10 capturas → recalibrar → publicar curva ROC real.
 4. Decidir o papel do comportamental no produto: reforço de risco (step-up) tende a valer mais
    que fator de identidade isolado, e é onde o 1:N tem menos risco de falso positivo.
-5. Trocar o JSON por Postgres (a interface `Store` é o ponto de troca). Autenticação e cifra em
-   repouso já estão feitas — falta gestão de chave num KMS em vez de variável de ambiente.
+5. Postgres, autenticação e cifra em repouso já estão feitos. O que falta na infraestrutura:
+   chave de cifra num KMS em vez de variável de ambiente, e retenção com expurgo automático.
