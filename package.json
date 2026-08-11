@@ -1,0 +1,16 @@
+{
+  "name": "hcaptcha-poc",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PoC: hCaptcha invis\u00edvel (risco comportamental passivo) + biometria comportamental pr\u00f3pria com cadastro, 1:1 e 1:N",
+  "scripts": {
+    "setup": "npm install --prefix server && npm install --prefix mobile",
+    "dev": "npm run dev --prefix server",
+    "app": "npm start --prefix mobile",
+    "test": "npm test --prefix server",
+    "typecheck": "npm run typecheck --prefix server && npm run typecheck --prefix mobile",
+    "simulate": "npm run simulate --prefix server",
+    "sync:contract": "npm run sync:contract --prefix server",
+    "check": "npm run typecheck && npm test"
+  }
+}

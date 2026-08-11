@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "hCaptcha PoC",
+    "slug": "hcaptcha-poc",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "hcaptchapoc",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "in.facesign.hcaptchapoc",
+      "infoPlist": {
+        "NSMotionUsageDescription": "Usamos o acelerômetro e o giroscópio para medir como você segura o aparelho, parte da biometria comportamental desta prova de conceito."
+      }
+    },
+    "android": {
+      "package": "in.facesign.hcaptchapoc",
+      "adaptiveIcon": {
+        "backgroundColor": "#0B1020",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

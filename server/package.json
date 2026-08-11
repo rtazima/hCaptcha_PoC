@@ -1,0 +1,35 @@
+{
+  "name": "hcaptcha-poc-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Backend da PoC: hCaptcha invis\u00edvel (risco) + biometria comportamental (cadastro, 1:1, 1:N)",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "simulate": "tsx src/simulator/run.ts",
+    "sync:contract": "node scripts/sync-contract.mjs"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.15.0",
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.2.2",
+    "tsx": "^4.23.12",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

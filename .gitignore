@@ -1,0 +1,28 @@
+node_modules/
+dist/
+build/
+
+# dados da PoC (contêm templates biométricos)
+server/data/
+*.tmp
+
+# ambiente
+.env
+.env.local
+!.env.example
+
+# Expo
+.expo/
+web-build/
+expo-env.d.ts
+.metro-health-check*
+/mobile/ios
+/mobile/android
+
+# logs e caches
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.tsbuildinfo
+.DS_Store
