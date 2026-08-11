@@ -112,14 +112,44 @@ observadas. Recalibre com dados reais: `MATCH_MIDPOINT` e `MATCH_STEEPNESS` defi
 dos scores, e limiar fora de escala é a forma mais comum de um piloto biométrico parecer
 quebrado sem estar.
 
+## Segurança (o que já está no código)
+
+Duas coisas que o doc de privacidade listava como bloqueadores para sair do laboratório já estão
+implementadas, ambas **desligadas por padrão** para não quebrar o fluxo de demo — mas com aviso
+alto no boot quando estão desligadas:
+
+```bash
+# fecha a API (mínimo 16 caracteres; aceita várias, separadas por vírgula, para rotação)
+API_KEYS=$(openssl rand -hex 24)
+
+# cifra os campos biométricos em repouso (AES-256-GCM)
+TEMPLATE_ENCRYPTION_KEY=$(openssl rand -base64 32)
+```
+
+**Autenticação.** Chave em `Authorization: Bearer <chave>` (ou `x-api-key`). Só `/healthz` fica
+aberto — de propósito, para o app conseguir dizer "falta a chave" em vez de mostrar um 401 cru.
+Comparação em tempo constante sobre hashes; a chave em claro nunca é guardada nem logada. Chave
+curta faz o servidor **não subir**, em vez de aceitar em silêncio.
+
+**Cifra em repouso.** Só os campos biométricos (vetores e template) são cifrados; a estrutura em
+volta continua legível, então `cat data/db.json` ainda mostra quem existe e a trilha de
+auditoria — dá para auditar sem ter a chave. GCM autentica: arquivo adulterado falha em vez de
+devolver dado corrompido em silêncio. Chave errada faz o servidor falhar no boot com mensagem
+explícita, em vez de subir com a base aparentemente vazia. Base já gravada em claro é lida
+normalmente e convertida na primeira escrita, sem script de migração.
+
+O ponto de troca para o esquema de autenticação de vocês (JWT, gateway, mTLS) é
+`server/src/auth.ts` — só esse arquivo.
+
 ## Qualidade
 
 ```bash
-npm run check      # typecheck do backend e do app + 113 testes
+npm run check      # typecheck do backend e do app + 149 testes
 ```
 
-- **113 testes** (vitest) cobrindo extração de features, template, matching, motor de decisão,
-  cliente do `/siteverify` (com `fetch` dublado), persistência e a API inteira via supertest.
+- **149 testes** (vitest) cobrindo extração de features, template, matching, motor de decisão,
+  cliente do `/siteverify` (com `fetch` dublado), persistência, cifra em repouso, autenticação e
+  a API inteira via supertest.
 - O app foi **empacotado com o Metro** (`npx expo export`) para garantir que resolve e compila
   de verdade — foi isso que revelou que o `@hcaptcha/react-native-hcaptcha@4.1.0` importa
   `prop-types` sem declarar a dependência (por isso ela está explícita no `mobile/package.json`).
@@ -154,8 +184,10 @@ npm run check      # typecheck do backend e do app + 113 testes
    allow/deny, e por isso existe (desligada por padrão) a adaptação incremental do template.
 6. **Armazenamento é um arquivo JSON** (`server/data/db.json`), proposital para a PoC ser
    inspecionável. A interface `Store` é o ponto de troca para Postgres.
-7. **Sem autenticação na API.** Qualquer um na mesma rede fala com ela. É PoC de laboratório,
-   não deploy.
+7. **Autenticação e cifra vêm desligadas por padrão.** Existem e são testadas (veja
+   *Segurança*), mas sem `API_KEYS` a API está aberta a quem estiver na mesma rede, e sem
+   `TEMPLATE_ENCRYPTION_KEY` os templates ficam em claro. Ligue as duas antes de coletar dado de
+   gente de verdade.
 
 ## Próximos passos sugeridos
 
@@ -165,4 +197,5 @@ npm run check      # typecheck do backend e do app + 113 testes
 3. Coleta piloto com ~30 pessoas × ~10 capturas → recalibrar → publicar curva ROC real.
 4. Decidir o papel do comportamental no produto: reforço de risco (step-up) tende a valer mais
    que fator de identidade isolado, e é onde o 1:N tem menos risco de falso positivo.
-5. Trocar JSON por Postgres, colocar autenticação na API e cifrar template em repouso.
+5. Trocar o JSON por Postgres (a interface `Store` é o ponto de troca). Autenticação e cifra em
+   repouso já estão feitas — falta gestão de chave num KMS em vez de variável de ambiente.

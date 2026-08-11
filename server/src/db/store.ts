@@ -17,6 +17,12 @@ import {
 } from '../biometrics/features.js';
 import type { BiometricTemplate } from '../biometrics/template.js';
 import type { QualityReport } from '../biometrics/contract.js';
+import {
+  CryptoConfigError,
+  SealedDataError,
+  type Sealer,
+  createNullSealer,
+} from '../crypto/atRest.js';
 
 export interface StoredSample {
   sampleId: string;
@@ -54,10 +60,37 @@ export interface AuditEvent {
   detail?: Record<string, unknown>;
 }
 
+/**
+ * Formato em disco. Os campos biométricos podem estar cifrados (`sealedVector`,
+ * `sealedTemplate`) — nesse caso os equivalentes em claro estão ausentes.
+ * A estrutura em volta segue legível de propósito: dá para ver quem existe e
+ * auditar decisões sem ter a chave.
+ */
+interface DiskSample {
+  sampleId: string;
+  createdAt: string;
+  task: string;
+  quality: QualityReport;
+  vector?: FeatureVector;
+  sealedVector?: string;
+}
+
+interface DiskUser {
+  userId: string;
+  displayName: string | null;
+  createdAt: string;
+  updatedAt: string;
+  samples: DiskSample[];
+  template?: BiometricTemplate | null;
+  sealedTemplate?: string;
+}
+
 interface Snapshot {
-  schema: 1;
+  /** 1 = sempre em claro; 2 = campos biométricos podem estar cifrados */
+  schema: 1 | 2;
   featureVersion: number;
-  users: UserRecord[];
+  encryption?: 'none' | 'aes-256-gcm';
+  users: DiskUser[];
   sessions: CaptureSession[];
   usedTokens: Array<{ hash: string; at: string }>;
   events: AuditEvent[];
@@ -77,11 +110,39 @@ export class Store {
   private events: AuditEvent[] = [];
   private statsCache: CorpusStats | null = null;
 
-  constructor(private readonly filePath: string | null = null) {
+  constructor(
+    private readonly filePath: string | null = null,
+    private readonly sealer: Sealer = createNullSealer(),
+  ) {
     if (this.filePath) this.load();
   }
 
   // -- ciclo de vida -------------------------------------------------------
+
+  /** Reconstitui uma amostra do disco, decifrando se necessário. */
+  private readSample(sample: DiskSample): StoredSample | null {
+    let vector: FeatureVector | undefined = sample.vector;
+    if (sample.sealedVector != null) {
+      vector = this.sealer.open<FeatureVector>(sample.sealedVector);
+    }
+    // amostras de outra versão de features não são comparáveis: descartadas
+    if (vector?.version !== FEATURE_VERSION) return null;
+    return {
+      sampleId: sample.sampleId,
+      createdAt: sample.createdAt,
+      task: sample.task,
+      quality: sample.quality,
+      vector,
+    };
+  }
+
+  private readTemplate(user: DiskUser): BiometricTemplate | null {
+    const template =
+      user.sealedTemplate != null
+        ? this.sealer.open<BiometricTemplate>(user.sealedTemplate)
+        : user.template;
+    return template?.version === FEATURE_VERSION ? template : null;
+  }
 
   private load(): void {
     if (!this.filePath) return;
@@ -94,18 +155,25 @@ export class Store {
     try {
       const snapshot = JSON.parse(raw) as Snapshot;
       for (const user of snapshot.users ?? []) {
-        // amostras de outra versão de features são descartadas (não são comparáveis)
-        const samples = (user.samples ?? []).filter((s) => s.vector?.version === FEATURE_VERSION);
+        const samples = (user.samples ?? [])
+          .map((sample) => this.readSample(sample))
+          .filter((sample): sample is StoredSample => sample !== null);
         this.users.set(user.userId, {
-          ...user,
+          userId: user.userId,
+          displayName: user.displayName,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
           samples,
-          template: user.template?.version === FEATURE_VERSION ? user.template : null,
+          template: this.readTemplate(user),
         });
       }
       for (const session of snapshot.sessions ?? []) this.sessions.set(session.sessionId, session);
       for (const token of snapshot.usedTokens ?? []) this.usedTokens.set(token.hash, token.at);
       this.events = snapshot.events ?? [];
     } catch (error) {
+      // erro de chave/adulteração tem mensagem própria e não deve ser mascarado
+      // por um conselho de "apague o arquivo" — apagar seria perder os cadastros
+      if (error instanceof CryptoConfigError || error instanceof SealedDataError) throw error;
       throw new Error(
         `Falha ao ler ${this.filePath}: ${(error as Error).message}. ` +
           'Apague o arquivo para começar de zero.',
@@ -113,12 +181,36 @@ export class Store {
     }
   }
 
+  private writeUser(user: UserRecord): DiskUser {
+    const base = {
+      userId: user.userId,
+      displayName: user.displayName,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
+    if (!this.sealer.enabled) {
+      return { ...base, samples: user.samples, template: user.template };
+    }
+    return {
+      ...base,
+      samples: user.samples.map((sample) => ({
+        sampleId: sample.sampleId,
+        createdAt: sample.createdAt,
+        task: sample.task,
+        quality: sample.quality,
+        sealedVector: this.sealer.seal(sample.vector),
+      })),
+      sealedTemplate: user.template == null ? undefined : this.sealer.seal(user.template),
+    };
+  }
+
   private persist(): void {
     if (!this.filePath) return;
     const snapshot: Snapshot = {
-      schema: 1,
+      schema: 2,
       featureVersion: FEATURE_VERSION,
-      users: [...this.users.values()],
+      encryption: this.sealer.enabled ? 'aes-256-gcm' : 'none',
+      users: [...this.users.values()].map((user) => this.writeUser(user)),
       sessions: [...this.sessions.values()].filter(
         (s) => Date.parse(s.expiresAt) > Date.now() - 3_600_000,
       ),

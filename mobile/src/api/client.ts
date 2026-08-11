@@ -17,8 +17,10 @@ import type {
 } from './contract';
 
 const DEFAULT_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8787';
+const DEFAULT_API_KEY = process.env.EXPO_PUBLIC_API_KEY ?? '';
 
 let baseUrl = DEFAULT_BASE_URL;
+let apiKey = DEFAULT_API_KEY;
 
 export function getBaseUrl(): string {
   return baseUrl;
@@ -30,6 +32,22 @@ export function setBaseUrl(url: string): void {
 
 export function resetBaseUrl(): void {
   baseUrl = DEFAULT_BASE_URL;
+}
+
+/**
+ * Chave da API. Vem de EXPO_PUBLIC_API_KEY, mas pode ser trocada na tela
+ * inicial — num demo o backend às vezes sobe fechado depois do app já rodando.
+ *
+ * Atenção: variável EXPO_PUBLIC_* é embutida no bundle, então esta chave é
+ * visível para quem tiver o app. Serve para separar sistemas numa PoC, não
+ * para autenticar usuário final.
+ */
+export function getApiKey(): string {
+  return apiKey;
+}
+
+export function setApiKey(key: string): void {
+  apiKey = key.trim();
 }
 
 export class ApiError extends Error {
@@ -89,11 +107,16 @@ const TIMEOUT_MS = 20_000;
 async function call<T>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  if (apiKey.length > 0) headers.authorization = `Bearer ${apiKey}`;
+
   let response: Response;
   try {
     response = await fetch(`${baseUrl}${path}`, {
       method,
-      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal,
     });
@@ -135,7 +158,14 @@ async function call<T>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: u
 }
 
 export const api = {
-  health: () => call<{ ok: boolean; users: number; captchaMode: string }>('/healthz', 'GET'),
+  health: () =>
+    call<{
+      ok: boolean;
+      users: number;
+      captchaMode: string;
+      authRequired: boolean;
+      encryptionAtRest: boolean;
+    }>('/healthz', 'GET'),
   config: () => call<ServerConfig>('/v1/config', 'GET'),
   initSession: () => call<SessionInitResponse>('/v1/sessions/init', 'POST', {}),
   enroll: (request: EnrollRequest) => call<EnrollResponse>('/v1/enroll', 'POST', request),

@@ -31,6 +31,7 @@ interface Options {
   impostor: number;
   seed: number;
   api: string | null;
+  apiKey: string | null;
   json: string | null;
   quiet: boolean;
 }
@@ -43,6 +44,7 @@ function parseArgs(argv: string[]): Options {
     impostor: 240,
     seed: 20260811,
     api: null,
+    apiKey: null,
     json: null,
     quiet: false,
   };
@@ -72,6 +74,9 @@ function parseArgs(argv: string[]): Options {
       case '--api':
         options.api = consume();
         break;
+      case '--api-key':
+        options.apiKey = consume();
+        break;
       case '--json':
         options.json = consume();
         break;
@@ -80,7 +85,7 @@ function parseArgs(argv: string[]): Options {
         break;
       case '--help':
         console.log(
-          'flags: --users --enroll --genuine --impostor --seed --api <url> --json <arquivo> --quiet',
+          'flags: --users --enroll --genuine --impostor --seed --api <url> --api-key <chave> --json <arquivo> --quiet',
         );
         process.exit(0);
     }
@@ -89,12 +94,19 @@ function parseArgs(argv: string[]): Options {
 }
 
 class ApiClient {
-  constructor(private readonly baseUrl: string) {}
+  constructor(
+    private readonly baseUrl: string,
+    private readonly apiKey: string | null = null,
+  ) {}
 
   private async call<T>(path: string, body?: unknown): Promise<T> {
+    const headers: Record<string, string> = {};
+    if (body !== undefined) headers['content-type'] = 'application/json';
+    if (this.apiKey) headers.authorization = `Bearer ${this.apiKey}`;
+
     const response = await fetch(`${this.baseUrl}${path}`, {
       method: body === undefined ? 'GET' : 'POST',
-      headers: body === undefined ? {} : { 'content-type': 'application/json' },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await response.text();
@@ -148,7 +160,7 @@ async function main() {
     close = () => new Promise<void>((resolve) => server.close(() => resolve()));
   }
 
-  const api = new ApiClient(baseUrl);
+  const api = new ApiClient(baseUrl, options.apiKey);
   const log = options.quiet ? () => {} : (msg: string) => console.log(msg);
 
   log(`\n=== Simulador PoC hCaptcha + biometria comportamental ===`);

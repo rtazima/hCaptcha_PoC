@@ -31,6 +31,9 @@ export const ERROR_LABEL: Record<string, string> = {
   session_already_used: 'Esta captura já foi enviada. Recomece a captura.',
   validation_error: 'O servidor recusou o formato do envio.',
   network_error: 'Sem conexão com o backend.',
+  unauthorized: 'O backend exige chave de API — informe-a na tela inicial.',
+  encryption_error:
+    'O servidor não conseguiu ler os dados cifrados (chave de cifra errada ou trocada).',
 };
 
 export const GROUP_LABEL: Record<string, string> = {

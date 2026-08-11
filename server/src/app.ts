@@ -13,6 +13,9 @@ import {
   FEATURE_VERSION,
   GROUP_WEIGHTS,
 } from './biometrics/features.js';
+import { type AuthConfig, apiKeyAuth, buildAuthConfig } from './auth.js';
+import { AuthConfigError } from './auth.js';
+import { CryptoConfigError, SealedDataError, createSealer } from './crypto/atRest.js';
 
 export interface CreateAppOptions {
   config: AppConfig;
@@ -24,6 +27,9 @@ export interface AppBundle {
   app: express.Express;
   store: Store;
   service: BiometricService;
+  auth: AuthConfig;
+  /** true quando os campos biométricos são cifrados em repouso */
+  encryptionEnabled: boolean;
 }
 
 function clientIp(req: Request): string | undefined {
@@ -41,14 +47,17 @@ function wrap(handler: (req: Request, res: Response) => Promise<void> | void) {
 
 export function createApp(options: CreateAppOptions): AppBundle {
   const { config } = options;
-  const store = options.store ?? new Store(config.dataFile);
+  const sealer = createSealer(config.encryptionKey);
+  const store = options.store ?? new Store(config.dataFile, sealer);
   const verifier = options.verifier ?? createCaptchaVerifier(config);
   const service = new BiometricService(store, config, verifier);
+  const auth = buildAuthConfig(config.apiKeys);
 
   const app = express();
   app.disable('x-powered-by');
   app.use(cors({ origin: config.corsOrigin }));
   app.use(express.json({ limit: '4mb' }));
+  app.use(apiKeyAuth(auth));
 
   app.get('/healthz', (_req, res) => {
     res.json({
@@ -57,6 +66,9 @@ export function createApp(options: CreateAppOptions): AppBundle {
       captchaMode: config.captcha.mode,
       users: service.listUsers().length,
       uptimeSec: Math.round(process.uptime()),
+      // o cliente precisa saber se deve mandar chave, mas não qual
+      authRequired: auth.enabled,
+      encryptionAtRest: sealer.enabled,
     });
   });
 
@@ -171,6 +183,11 @@ export function createApp(options: CreateAppOptions): AppBundle {
   });
 
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    if (error instanceof CryptoConfigError || error instanceof SealedDataError) {
+      // nunca 500 genérico aqui: erro de chave é operacional e precisa ser óbvio
+      res.status(500).json({ error: 'encryption_error', message: error.message });
+      return;
+    }
     if (error instanceof ZodError) {
       res.status(400).json({
         error: 'validation_error',
@@ -193,5 +210,7 @@ export function createApp(options: CreateAppOptions): AppBundle {
     res.status(500).json({ error: 'internal_error', message });
   });
 
-  return { app, store, service };
+  return { app, store, service, auth, encryptionEnabled: sealer.enabled };
 }
+
+export { AuthConfigError };

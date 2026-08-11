@@ -13,9 +13,11 @@ import { describeError } from '../strings';
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
 export function HomeScreen({ navigation }: Props) {
-  const { config, loading, error, baseUrl, changeBaseUrl, reload } = useServerConfig();
+  const { config, health, loading, error, baseUrl, apiKey, changeBaseUrl, changeApiKey, reload } =
+    useServerConfig();
   const captcha = useCaptcha();
   const [urlDraft, setUrlDraft] = useState(baseUrl);
+  const [keyDraft, setKeyDraft] = useState(apiKey);
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [usersError, setUsersError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -73,13 +75,46 @@ export function HomeScreen({ navigation }: Props) {
           placeholder="http://192.168.0.10:8787"
           keyboardType="url"
         />
+        <Field
+          label="Chave de API (só se o backend exigir)"
+          value={keyDraft}
+          onChangeText={setKeyDraft}
+          placeholder="valor de API_KEYS no servidor"
+        />
         <Button
           label="Conectar"
-          onPress={() => changeBaseUrl(urlDraft)}
+          onPress={() => {
+            changeApiKey(keyDraft);
+            changeBaseUrl(urlDraft);
+            reload();
+          }}
           disabled={urlDraft.trim().length === 0}
         />
         {loading ? <Text style={styles.dim}>carregando configuração…</Text> : null}
         {error ? <Notice text={error} tone={colors.deny} /> : null}
+        {health ? (
+          <View style={styles.block}>
+            <Row
+              label="autenticação"
+              value={health.authRequired ? 'chave de API exigida' : 'ABERTA'}
+              tone={health.authRequired ? colors.allow : colors.stepUp}
+            />
+            <Row
+              label="cifra em repouso"
+              value={health.encryptionAtRest ? 'AES-256-GCM' : 'DESLIGADA'}
+              tone={health.encryptionAtRest ? colors.allow : colors.stepUp}
+            />
+          </View>
+        ) : null}
+        {health && !health.encryptionAtRest ? (
+          <Notice
+            text={
+              'Os templates estão gravados em claro no servidor. Dado biométrico é sensível na ' +
+              'LGPD e não se "reseta" como senha — defina TEMPLATE_ENCRYPTION_KEY antes de coletar ' +
+              'de gente de verdade.'
+            }
+          />
+        ) : null}
         {config ? (
           <View style={styles.block}>
             <Row label="modo hCaptcha" value={config.captcha.mode} />
