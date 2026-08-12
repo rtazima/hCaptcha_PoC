@@ -144,13 +144,48 @@ Duas amarras independentes:
 Detalhe deliberado: um token de captcha inválido **não** consome a sessão de captura, para que
 uma falha de rede no `/siteverify` não obrigue a pessoa a repetir a captura inteira.
 
+## Persistência
+
+Duas implementações atrás da interface `Store` (`server/src/db/types.ts`), escolhidas por
+ambiente:
+
+| | `JsonStore` (default) | `PostgresStore` (`DATABASE_URL`) |
+|---|---|---|
+| inspeção | `cat data/db.json` | `psql` |
+| dependência externa | nenhuma | Postgres |
+| `consumeSession` | serializado pelo event loop de um processo | `UPDATE` condicional, atômico entre instâncias |
+| token já usado | Map em memória + arquivo | `INSERT ... ON CONFLICT DO NOTHING` |
+| apagar pessoa | remove do Map, anula `userId` na auditoria | transação: `ON DELETE CASCADE` + `UPDATE` na auditoria |
+| poda de auditoria/tokens | corta o array ao gravar | `DELETE ... OFFSET` oportunista |
+
+Os métodos da interface são assíncronos porque um dos dois precisa ser. O `JsonStore` cumpre o
+contrato de forma síncrona por dentro e devolve **cópias**: sem isso as duas implementações teriam
+semânticas diferentes (o Postgres devolve objetos novos a cada leitura) e um `push` acidental de
+quem chama corromperia o estado.
+
+O schema vive em `server/src/db/migrations/*.sql`. Duas escolhas registradas ali:
+
+- **`vector`/`sealed_vector` em par**, com constraint proibindo as duas formas ao mesmo tempo.
+  Assim a mesma base atende com e sem cifra, e migrar não exige mexer no schema.
+- **`audit_events.user_id` sem FK**, de propósito. `ON DELETE CASCADE` apagaria a auditoria junto
+  com a pessoa; `RESTRICT` impediria o direito à eliminação. Sem FK, apagar a pessoa anula o
+  campo e preserva a trilha.
+
+A confiança de que trocar `DATABASE_URL` não muda comportamento vem de `store-contract.test.ts`:
+a mesma bateria roda nas duas. Foi ela que revelou que o Postgres subia "saudável" com a chave de
+cifra errada e só falhava na primeira leitura — daí o `assertReadable()` no boot.
+
 ## Estrutura
 
 ```
 server/src/
   biometrics/  contract.ts features.ts template.ts match.ts decision.ts stats.ts
   hcaptcha/    verify.ts          cliente do /siteverify (test/live/mock)
-  db/          store.ts           persistência JSON + auditoria
+  db/          types.ts           contrato de persistência (assíncrono)
+               json.ts            implementação em arquivo/memória
+               postgres.ts        implementação Postgres
+               migrate.ts         runner de migração + migrations/*.sql
+               cli-migrate.ts     `npm run db:migrate` para pipelines
   simulator/   synth.ts metrics.ts run.ts
   app.ts service.ts config.ts schemas.ts index.ts
 mobile/src/

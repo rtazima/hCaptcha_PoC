@@ -20,7 +20,7 @@ import { buildTemplate } from './biometrics/template.js';
 import { identify as rankGallery, matchScore } from './biometrics/match.js';
 import { decideIdentify, decideVerify } from './biometrics/decision.js';
 import type { AppConfig } from './config.js';
-import type { Store } from './db/store.js';
+import type { Store } from './db/types.js';
 import { type CaptchaVerifier, replayedTokenAssessment } from './hcaptcha/verify.js';
 
 export class HttpError extends Error {
@@ -42,8 +42,8 @@ export class BiometricService {
     private readonly captcha: CaptchaVerifier,
   ) {}
 
-  initSession(): SessionInitResponse {
-    const session = this.store.createSession(this.config.sessionTtlMs);
+  async initSession(): Promise<SessionInitResponse> {
+    const session = await this.store.createSession(this.config.sessionTtlMs);
     return {
       sessionId: session.sessionId,
       sitekey: this.config.captcha.sitekey,
@@ -55,19 +55,19 @@ export class BiometricService {
 
   /** Valida o token hCaptcha (com proteção antirreplay opcional). */
   private async assessCaptcha(token: string, remoteIp?: string): Promise<CaptchaAssessment> {
-    if (this.config.captcha.enforceSingleUse && this.store.isTokenUsed(token)) {
+    if (this.config.captcha.enforceSingleUse && (await this.store.isTokenUsed(token))) {
       return replayedTokenAssessment(this.config);
     }
     const assessment = await this.captcha.verify(token, remoteIp);
     if (assessment.success && this.config.captcha.enforceSingleUse) {
-      this.store.markTokenUsed(token);
+      await this.store.markTokenUsed(token);
     }
     return assessment;
   }
 
   /** Consome o sessionId da captura; lança 400 se inválido. */
-  private consumeSession(sample: RawSample): void {
-    const result = this.store.consumeSession(sample.sessionId);
+  private async consumeSession(sample: RawSample): Promise<void> {
+    const result = await this.store.consumeSession(sample.sessionId);
     if (!result.ok) {
       throw new HttpError(
         400,
@@ -95,12 +95,12 @@ export class BiometricService {
     }
 
     const { vector, quality } = extractFeatures(request.sample);
-    this.consumeSession(request.sample);
+    await this.consumeSession(request.sample);
 
-    const user = this.store.ensureUser(request.userId, request.displayName ?? null);
+    const user = await this.store.ensureUser(request.userId, request.displayName ?? null);
 
     if (!quality.ok) {
-      this.store.appendEvent({
+      await this.store.appendEvent({
         kind: 'enroll',
         userId: user.userId,
         decision: 'rejected',
@@ -124,19 +124,19 @@ export class BiometricService {
       };
     }
 
-    this.store.addSample(user.userId, { task: request.sample.task, vector, quality });
-    this.store.trimSamples(user.userId, this.config.enrollment.maxSamples);
+    await this.store.addSample(user.userId, { task: request.sample.task, vector, quality });
+    await this.store.trimSamples(user.userId, this.config.enrollment.maxSamples);
 
-    const fresh = this.store.getUser(user.userId)!;
+    const fresh = (await this.store.getUser(user.userId))!;
     const enrolled = fresh.samples.length >= this.config.enrollment.samplesRequired;
     if (enrolled) {
-      this.store.setTemplate(
+      await this.store.setTemplate(
         user.userId,
         buildTemplate(fresh.samples.map((s) => s.vector)),
       );
     }
 
-    this.store.appendEvent({
+    await this.store.appendEvent({
       kind: 'enroll',
       userId: user.userId,
       decision: enrolled ? 'enrolled' : 'accepted',
@@ -159,14 +159,14 @@ export class BiometricService {
 
   async verify(request: VerifyRequest, remoteIp?: string): Promise<VerifyResponse> {
     const started = Date.now();
-    const user = this.store.getUser(request.userId);
+    const user = await this.store.getUser(request.userId);
     if (!user) {
       throw new HttpError(404, 'user_not_found', `Usuário ${request.userId} não cadastrado.`);
     }
 
     const captcha = await this.assessCaptcha(request.captchaToken, remoteIp);
     const { vector, quality } = extractFeatures(request.sample);
-    if (captcha.success) this.consumeSession(request.sample);
+    if (captcha.success) await this.consumeSession(request.sample);
 
     if (!user.template) {
       const response: VerifyResponse = {
@@ -179,7 +179,7 @@ export class BiometricService {
         captcha,
         latencyMs: Date.now() - started,
       };
-      this.store.appendEvent({
+      await this.store.appendEvent({
         kind: 'verify',
         userId: user.userId,
         decision: 'deny',
@@ -190,7 +190,7 @@ export class BiometricService {
       return response;
     }
 
-    const match = matchScore(user.template, vector, this.store.corpusStats(), this.config.match);
+    const match = matchScore(user.template, vector, await this.store.corpusStats(), this.config.match);
     const { decision, reasons, threshold } = decideVerify({
       match,
       quality,
@@ -206,13 +206,13 @@ export class BiometricService {
       match.similarity >= threshold + 0.1
     ) {
       // aprendizado incremental: reforça o template com capturas claramente genuínas
-      this.store.addSample(user.userId, { task: request.sample.task, vector, quality });
-      this.store.trimSamples(user.userId, this.config.enrollment.maxSamples);
-      const updated = this.store.getUser(user.userId)!;
-      this.store.setTemplate(user.userId, buildTemplate(updated.samples.map((s) => s.vector)));
+      await this.store.addSample(user.userId, { task: request.sample.task, vector, quality });
+      await this.store.trimSamples(user.userId, this.config.enrollment.maxSamples);
+      const updated = (await this.store.getUser(user.userId))!;
+      await this.store.setTemplate(user.userId, buildTemplate(updated.samples.map((s) => s.vector)));
     }
 
-    this.store.appendEvent({
+    await this.store.appendEvent({
       kind: 'verify',
       userId: user.userId,
       decision,
@@ -238,15 +238,15 @@ export class BiometricService {
     const started = Date.now();
     const captcha = await this.assessCaptcha(request.captchaToken, remoteIp);
     const { vector, quality } = extractFeatures(request.sample);
-    if (captcha.success) this.consumeSession(request.sample);
+    if (captcha.success) await this.consumeSession(request.sample);
 
-    const gallery = this.store.gallery().map((user) => ({
+    const gallery = (await this.store.gallery()).map((user) => ({
       userId: user.userId,
       displayName: user.displayName,
       template: user.template!,
     }));
 
-    const ranked = rankGallery(gallery, vector, this.store.corpusStats(), this.config.match);
+    const ranked = rankGallery(gallery, vector, await this.store.corpusStats(), this.config.match);
     const { decision, reasons, threshold, matchedUserId, margin } = decideIdentify({
       ranked: ranked.map((r) => ({ userId: r.userId, match: r.match })),
       quality,
@@ -262,7 +262,7 @@ export class BiometricService {
       match: entry.match,
     }));
 
-    this.store.appendEvent({
+    await this.store.appendEvent({
       kind: 'identify',
       userId: matchedUserId,
       decision,
@@ -286,8 +286,8 @@ export class BiometricService {
     };
   }
 
-  listUsers(): UserSummary[] {
-    return this.store.listUsers().map((user) => ({
+  async listUsers(): Promise<UserSummary[]> {
+    return (await this.store.listUsers()).map((user) => ({
       userId: user.userId,
       displayName: user.displayName,
       samples: user.samples.length,
@@ -297,8 +297,8 @@ export class BiometricService {
     }));
   }
 
-  deleteUser(userId: string): void {
-    if (!this.store.deleteUser(userId)) {
+  async deleteUser(userId: string): Promise<void> {
+    if (!(await this.store.deleteUser(userId))) {
       throw new HttpError(404, 'user_not_found', `Usuário ${userId} não encontrado.`);
     }
   }

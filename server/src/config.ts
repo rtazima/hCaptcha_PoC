@@ -11,6 +11,22 @@ export interface AppConfig {
   port: number;
   host: string;
   dataFile: string | null;
+  /** definido => usa Postgres em vez do arquivo JSON */
+  databaseUrl: string | null;
+  /** máximo de conexões no pool do Postgres */
+  pgPoolMax: number;
+  /**
+   * true em ambiente de função (Vercel, Lambda). Nesses lugares o sistema de
+   * arquivos é efêmero e cada invocação pode ser um processo novo, então o
+   * armazenamento em arquivo perderia dados sem avisar.
+   */
+  serverless: boolean;
+  /**
+   * Pula as migrações no boot. Em serverless o recomendado é migrar fora de
+   * banda (`npm run db:migrate`), porque a função é empacotada e os .sql podem
+   * não acompanhar o bundle.
+   */
+  skipBootMigrations: boolean;
   corsOrigin: string;
   captcha: {
     mode: CaptchaMode;
@@ -36,6 +52,10 @@ export interface AppConfig {
   match: MatchParams;
   policy: DecisionPolicy;
   sessionTtlMs: number;
+  /** chaves de API em claro; ficam só em memória e viram hash no boot */
+  apiKeys: string[];
+  /** chave AES-256 (base64 ou hex) para cifrar os campos biométricos em repouso */
+  encryptionKey: string | null;
 }
 
 function num(value: string | undefined, fallback: number): number {
@@ -62,6 +82,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: num(env.PORT, 8787),
     host: env.HOST ?? '0.0.0.0',
     dataFile: env.DATA_FILE === 'memory' ? null : (env.DATA_FILE ?? 'data/db.json'),
+    // a integração Postgres da Vercel (Neon) injeta POSTGRES_URL, não DATABASE_URL
+    databaseUrl: env.DATABASE_URL?.trim() || env.POSTGRES_URL?.trim() || null,
+    // em serverless o default baixo evita esgotar as conexões do Postgres: cada
+    // instância da função mantém o seu próprio pool
+    pgPoolMax: num(env.PG_POOL_MAX, env.VERCEL || env.AWS_LAMBDA_FUNCTION_NAME ? 3 : 10),
+    serverless: Boolean(env.VERCEL || env.AWS_LAMBDA_FUNCTION_NAME),
+    skipBootMigrations: bool(env.SKIP_BOOT_MIGRATIONS, false),
     corsOrigin: env.CORS_ORIGIN ?? '*',
     captcha: {
       mode,
@@ -102,5 +129,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       ),
     },
     sessionTtlMs: num(env.SESSION_TTL_MS, 10 * 60 * 1000),
+    apiKeys: (env.API_KEYS ?? env.API_KEY ?? '')
+      .split(',')
+      .map((key) => key.trim())
+      .filter((key) => key.length > 0),
+    encryptionKey: env.TEMPLATE_ENCRYPTION_KEY?.trim() || null,
   };
 }

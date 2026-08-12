@@ -9,8 +9,9 @@
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors, radius, spacing } from '../theme';
-import { Card, Checklist } from '../components/ui';
+import { Button, Card, Checklist, Notice } from '../components/ui';
 import { CAPTURE_MINIMUMS, type CaptureCounts } from './recorder';
+import { CaptureSurface } from './CaptureSurface';
 import type { UseCaptureResult } from './useCapture';
 
 /** Frase fixa: mesma em cadastro e verificação. */
@@ -19,13 +20,16 @@ export const CAPTURE_PHRASE = 'biometria comportamental em teste';
 const TAP_TARGET_COUNT = 6;
 
 export function CaptureTask({ capture }: { capture: UseCaptureResult }) {
-  const { counts, typing, swipePanHandlers, tap, motionAvailable } = capture;
+  const { counts, typing, tap, motionAvailable, requestMotionPermission } = capture;
   const [tappedIndexes, setTappedIndexes] = useState<number[]>([]);
 
   const typedOk = counts.keystrokes >= CAPTURE_MINIMUMS.keystrokes;
   const swipeOk = counts.gestures >= CAPTURE_MINIMUMS.gestures;
   const tapOk = counts.taps >= CAPTURE_MINIMUMS.taps;
-  const motionOk = counts.motion >= CAPTURE_MINIMUMS.motion;
+  // sem sensores acessíveis o grupo é dispensado (o servidor aceita 4 de 5
+   // grupos); exigir aqui travaria o app no Safari do iOS
+  const motionOk = counts.motion === 0 || counts.motion >= CAPTURE_MINIMUMS.motion;
+  const motionMissing = counts.motion === 0;
   const timeOk = counts.elapsedMs >= CAPTURE_MINIMUMS.durationMs;
 
   return (
@@ -38,6 +42,7 @@ export function CaptureTask({ capture }: { capture: UseCaptureResult }) {
           <Text style={styles.phrase}>{CAPTURE_PHRASE}</Text>
         </View>
         <TextInput
+          testID="capture-typing"
           style={styles.input}
           value={typing.value}
           onChangeText={typing.onChangeText}
@@ -61,14 +66,11 @@ export function CaptureTask({ capture }: { capture: UseCaptureResult }) {
         title="2. Arraste na área abaixo"
         subtitle="Velocidade, curvatura e desaceleração do dedo são a parte mais discriminativa da captura."
       >
-        <View style={styles.swipeArea} {...swipePanHandlers}>
-          <Text style={styles.swipeLabel}>
-            {swipeOk ? 'pode continuar arrastando' : 'arraste em qualquer direção'}
-          </Text>
-          <Text style={styles.swipeCount}>
-            {counts.gestures}/{CAPTURE_MINIMUMS.gestures}
-          </Text>
-        </View>
+        <CaptureSurface
+          capture={capture}
+          count={counts.gestures}
+          required={CAPTURE_MINIMUMS.gestures}
+        />
       </Card>
 
       <Card
@@ -81,6 +83,7 @@ export function CaptureTask({ capture }: { capture: UseCaptureResult }) {
             return (
               <Pressable
                 key={index}
+                testID={`capture-tap-${index}`}
                 onPressIn={(event) => {
                   tap.onPressIn(event);
                   setTappedIndexes((previous) =>
@@ -104,6 +107,18 @@ export function CaptureTask({ capture }: { capture: UseCaptureResult }) {
         </Text>
       </Card>
 
+      {motionMissing && requestMotionPermission ? (
+        <Card title="Sensores de movimento">
+          <Notice
+            text={
+              'Este navegador só libera acelerômetro e giroscópio com sua permissão. Sem eles a ' +
+              'captura funciona, mas usa 4 dos 5 grupos de sinais — o template fica mais fraco.'
+            }
+          />
+          <Button label="Permitir sensores" onPress={() => void requestMotionPermission()} />
+        </Card>
+      ) : null}
+
       <Card title="Progresso da captura">
         <Checklist
           items={[
@@ -113,7 +128,11 @@ export function CaptureTask({ capture }: { capture: UseCaptureResult }) {
             {
               label: 'Movimento do aparelho',
               done: motionOk,
-              detail: motionAvailable ? `${counts.motion} amostras` : 'sensor indisponível',
+              detail: motionMissing
+                ? motionAvailable
+                  ? 'aguardando sensor…'
+                  : 'indisponível (opcional)'
+                : `${counts.motion} amostras`,
             },
             { label: 'Duração mínima', done: timeOk, detail: formatDuration(counts) },
           ]}
@@ -147,19 +166,6 @@ const styles = StyleSheet.create({
     minHeight: 68,
   },
   hint: { color: colors.textDim, fontSize: 12, marginTop: spacing.sm },
-  swipeArea: {
-    height: 150,
-    backgroundColor: colors.cardAlt,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-  },
-  swipeLabel: { color: colors.textDim, fontSize: 13 },
-  swipeCount: { color: colors.primary, fontSize: 22, fontWeight: '700' },
   targets: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, justifyContent: 'center' },
   target: {
     width: 60,

@@ -14,7 +14,8 @@ convicção religiosa. Isso é o ponto de partida, e traz três consequências i
 2. **Finalidade específica.** Template coletado para autenticação não pode ser reaproveitado
    para perfilamento, analytics ou treinamento de modelo sem nova base legal.
 3. **Direito à eliminação** (art. 18). Precisa existir caminho para apagar o template — nesta
-   PoC é `DELETE /v1/users/:id`, e ele apaga amostras e template juntos.
+   PoC é `DELETE /v1/users/:id`, que apaga amostras e template juntos e **anula** o `user_id` na
+   trilha de auditoria: a decisão fica registrada, sem apontar para ninguém.
 
 Vale registrar que a discussão sobre **biometria comportamental** é mais nova que a sobre
 face/digital, e há leitura de que padrão de digitação e de gesto se enquadram como biométricos
@@ -44,7 +45,7 @@ Se essa afirmação for material para o seu DPO, peça confirmação por escrito
 
 | dado | onde | forma |
 |---|---|---|
-| amostras e templates | `server/data/db.json` | **texto claro** |
+| amostras e templates | `server/data/db.json` ou Postgres | **AES-256-GCM** com `TEMPLATE_ENCRYPTION_KEY`; **texto claro** sem ela |
 | tokens do hCaptcha já usados | mesmo arquivo | SHA-256 (nunca em claro — há teste) |
 | trilha de auditoria | mesmo arquivo | últimos 500 eventos |
 | eventos crus da captura | **descartados** | só o vetor de 45 features é gravado |
@@ -55,15 +56,26 @@ Detalhe que ajuda: o servidor **não guarda os eventos crus**, só o vetor deriv
 
 ## O que precisa mudar antes de sair do laboratório
 
-Em ordem de urgência:
+Dois itens desta lista já foram implementados (e testados), mas **vêm desligados por padrão** —
+o servidor avisa alto no boot quando estão:
 
-1. **Cifrar template em repouso** (KMS/HSM, chave fora do banco). Hoje está em JSON claro.
-2. **Autenticar a API.** Hoje qualquer um na mesma rede cadastra, verifica e lista pessoas.
+- **Cifra em repouso**: `TEMPLATE_ENCRYPTION_KEY` liga AES-256-GCM nos vetores e templates.
+  Falta ainda a chave sair da variável de ambiente para um KMS/HSM.
+- **Autenticação da API**: `API_KEYS` fecha tudo menos `/healthz`.
+
+O que continua pendente, em ordem de urgência:
+
+1. **Tirar a chave de cifra da variável de ambiente** e colocar em KMS/HSM, com rotação. Chave
+   ao lado do dado cifrado protege contra vazamento do arquivo, não contra acesso ao servidor.
+2. **Trocar chave estática de API** por credencial por cliente com expiração, se isso for além
+   de laboratório.
 3. **Consentimento específico e destacado** antes da primeira captura, com registro de versão
    do texto, data e hora.
 4. **Política de retenção** com prazo definido e expurgo automático. "Guardar para sempre"
    não sobrevive ao art. 15.
-5. **Trocar JSON por banco** com controle de acesso, log de acesso e backup cifrado.
+5. **Configurar o banco direito.** O Postgres já é suportado (`DATABASE_URL`), mas falta
+   controle de acesso por papel, log de acesso e backup cifrado. Atenção: backup de base cifrada
+   sem a chave é backup inútil — e com a chave ao lado, é vazamento em dobro.
 6. **Não usar `userId` identificável.** Prefira pseudônimo com o de-para em outro sistema, para
    que um vazamento do template não venha com o nome ao lado.
 7. **Relatório de impacto (RIPD)** — art. 38. Para dado sensível em escala é praticamente

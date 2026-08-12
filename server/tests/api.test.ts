@@ -3,7 +3,8 @@ import request from 'supertest';
 import type { Express } from 'express';
 import { createApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
-import { Store } from '../src/db/store.js';
+import { JsonStore } from '../src/db/json.js';
+import type { Store } from '../src/db/types.js';
 import type {
   EnrollResponse,
   IdentifyResponse,
@@ -23,7 +24,7 @@ interface Harness {
 
 function harness(env: Record<string, string> = {}): Harness {
   const cfg = loadConfig({ HCAPTCHA_MODE: 'mock', DATA_FILE: 'memory', ...env });
-  const store = new Store(null);
+  const store = new JsonStore(null);
   const { app } = createApp({ config: cfg, store });
   return { app, store, rng: makeRng(4242) };
 }

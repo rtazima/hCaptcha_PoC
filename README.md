@@ -65,6 +65,44 @@ Sem `.env`, o backend sobe com as **chaves públicas de teste do hCaptcha**
 desafiam e não devolvem `score`**: o risco exibido no app aparecerá marcado como *derivado*.
 Para exercitar biometria comportamental de verdade, veja [docs/hcaptcha.md](docs/hcaptcha.md).
 
+### Mostrar para outras pessoas
+
+**Quer um link para mandar para alguém?** `npm run build:web` gera um site estático do mesmo
+código — abre no navegador do celular, Android e iPhone, sem instalar nada. O fluxo de cadastro
+foi verificado em Chromium real (Playwright), sem erros de JS.
+
+Na **Vercel** dá para hospedar site e API (dois projetos, integração Git, deploy a cada push) — os
+`vercel.json` já estão prontos, e lá o Postgres é obrigatório: em serverless o disco é efêmero e o
+backend recusa subir com armazenamento em arquivo, de propósito.
+
+[docs/demo.md](docs/demo.md) tem as rotas (LAN, túnel, web, Vercel e APK), os `render.yaml` e
+`Dockerfile` prontos, o que muda na web (hCaptcha via widget JS em vez do SDK React Native) e —
+importante — o checklist do que **não é opcional** quando outras pessoas se cadastram: cifra
+ligada, API fechada, consentimento e expurgo depois.
+
+### Roteiro de teste no celular
+
+O que **dá** para verificar com as chaves de teste: cadastro real, 1:1, 1:N, rejeição de impostor,
+qualidade de captura e a trilha de auditoria. O que **não** dá: risco do hCaptcha de verdade — com
+sitekey de teste ele vem marcado como *derivado*.
+
+1. `npm run dev` — anote o IP que ele imprime.
+2. No celular (mesma Wi-Fi), Expo Go lendo o QR de `npm run app`.
+3. Se a URL da API estiver errada, corrija **na tela inicial** do app, sem recompilar.
+4. **Cadastro**: 5 capturas suas. Digite a frase no seu ritmo normal — capturar você "se comportando
+   estranho" envenena o template.
+5. **1:1 com você mesmo**: deve dar `allow`.
+6. **1:1 com outra pessoa escolhendo o seu identificador**: é a demonstração que importa. Sem uma
+   segunda pessoa você não vê rejeição de impostor.
+7. **1:N**: deve te colocar em 1º com margem folgada.
+
+Para um ciclo mais rápido, `ENROLL_SAMPLES_REQUIRED=3` reduz o cadastro de 5 para 3 capturas — com
+template mais fraco, o que é o esperado e aparece no score.
+
+Se a rede corporativa isolar os clientes (o celular não alcança o IP do notebook), exponha a API por
+um túnel e aponte `EXPO_PUBLIC_API_URL` para a URL pública. O `--tunnel` do Expo resolve só o
+bundler, não a API.
+
 ## Os três fluxos no app
 
 1. **Cadastro** — 5 capturas da mesma tarefa (digitar uma frase fixa, arrastar, tocar nos
@@ -112,14 +150,80 @@ observadas. Recalibre com dados reais: `MATCH_MIDPOINT` e `MATCH_STEEPNESS` defi
 dos scores, e limiar fora de escala é a forma mais comum de um piloto biométrico parecer
 quebrado sem estar.
 
+## Persistência: arquivo ou Postgres
+
+O default segue sendo um arquivo JSON, porque `cat server/data/db.json` mostra o estado inteiro e
+não precisa de serviço externo. Definir `DATABASE_URL` troca para Postgres, sem nenhuma outra
+mudança:
+
+```bash
+docker compose up -d          # Postgres na porta 5433 (não briga com um local na 5432)
+export DATABASE_URL=postgres://hcaptcha_poc:poc_local_dev@127.0.0.1:5433/hcaptcha_poc
+npm run dev                   # migrações aplicam no boot
+```
+
+Para pipelines que migram antes de trocar as instâncias, há `npm run db:migrate` no pacote do
+servidor. O runner é idempotente e usa advisory lock, então subir duas instâncias ao mesmo tempo
+não aplica a mesma migração duas vezes.
+
+A escolha é do ambiente, não do código: acima da interface `Store` nada sabe qual está em uso
+(`/healthz` reporta em `storage`). O schema fica em `server/src/db/migrations/*.sql`, aplicado por
+um runner de ~40 linhas com advisory lock — o ativo é o SQL, que se porta para Flyway,
+node-pg-migrate ou o que vocês já usem.
+
+Duas coisas ficam **melhores** no Postgres, e é por isso que ele existe aqui:
+
+- `consumeSession` vira um único `UPDATE` condicional, atômico de verdade. No arquivo, o
+  antirreplay da captura só vale porque há um processo só; com duas instâncias, não valeria.
+- Apagar uma pessoa (LGPD art. 18) roda em transação: as amostras vão por `ON DELETE CASCADE` e a
+  auditoria fica, com `user_id` nulo. A trilha de decisões sobrevive sem apontar para ninguém.
+
+**A mesma bateria de testes roda nas duas implementações** (`store-contract.test.ts`). Sem
+`DATABASE_URL_TEST` os testes de Postgres são pulados, não falham:
+
+```bash
+DATABASE_URL_TEST=postgres://hcaptcha_poc:poc_local_dev@127.0.0.1:5433/hcaptcha_poc_test npm test
+```
+
+## Segurança (o que já está no código)
+
+Duas coisas que o doc de privacidade listava como bloqueadores para sair do laboratório já estão
+implementadas, ambas **desligadas por padrão** para não quebrar o fluxo de demo — mas com aviso
+alto no boot quando estão desligadas:
+
+```bash
+# fecha a API (mínimo 16 caracteres; aceita várias, separadas por vírgula, para rotação)
+API_KEYS=$(openssl rand -hex 24)
+
+# cifra os campos biométricos em repouso (AES-256-GCM)
+TEMPLATE_ENCRYPTION_KEY=$(openssl rand -base64 32)
+```
+
+**Autenticação.** Chave em `Authorization: Bearer <chave>` (ou `x-api-key`). Só `/healthz` fica
+aberto — de propósito, para o app conseguir dizer "falta a chave" em vez de mostrar um 401 cru.
+Comparação em tempo constante sobre hashes; a chave em claro nunca é guardada nem logada. Chave
+curta faz o servidor **não subir**, em vez de aceitar em silêncio.
+
+**Cifra em repouso.** Só os campos biométricos (vetores e template) são cifrados; a estrutura em
+volta continua legível, então `cat data/db.json` ainda mostra quem existe e a trilha de
+auditoria — dá para auditar sem ter a chave. GCM autentica: arquivo adulterado falha em vez de
+devolver dado corrompido em silêncio. Chave errada faz o servidor falhar no boot com mensagem
+explícita, em vez de subir com a base aparentemente vazia. Base já gravada em claro é lida
+normalmente e convertida na primeira escrita, sem script de migração.
+
+O ponto de troca para o esquema de autenticação de vocês (JWT, gateway, mTLS) é
+`server/src/auth.ts` — só esse arquivo.
+
 ## Qualidade
 
 ```bash
-npm run check      # typecheck do backend e do app + 113 testes
+npm run check      # typecheck do backend e do app + 197 testes
 ```
 
-- **113 testes** (vitest) cobrindo extração de features, template, matching, motor de decisão,
-  cliente do `/siteverify` (com `fetch` dublado), persistência e a API inteira via supertest.
+- **197 testes** (vitest) cobrindo extração de features, template, matching, motor de decisão,
+  cliente do `/siteverify` (com `fetch` dublado), cifra em repouso, autenticação, a API inteira
+  via supertest e uma **suíte de contrato de persistência que roda nas duas implementações**
+  (arquivo e Postgres).
 - O app foi **empacotado com o Metro** (`npx expo export`) para garantir que resolve e compila
   de verdade — foi isso que revelou que o `@hcaptcha/react-native-hcaptcha@4.1.0` importa
   `prop-types` sem declarar a dependência (por isso ela está explícita no `mobile/package.json`).
@@ -131,6 +235,7 @@ npm run check      # typecheck do backend e do app + 113 testes
 | [docs/arquitetura.md](docs/arquitetura.md) | pipeline completo: features, template, matching, decisão, antirreplay |
 | [docs/hcaptcha.md](docs/hcaptcha.md) | invisible × passive, chaves, `/siteverify`, `rqdata`, o que dá e o que não dá |
 | [docs/api.md](docs/api.md) | endpoints com exemplos de `curl` |
+| [docs/demo.md](docs/demo.md) | como mostrar para outras pessoas: LAN, túnel, deploy + APK |
 | [docs/privacidade.md](docs/privacidade.md) | LGPD: dado biométrico é sensível — o que isso exige |
 
 ## Limitações (leia antes de apresentar)
@@ -152,10 +257,13 @@ npm run check      # typecheck do backend e do app + 113 testes
 5. **Biometria comportamental muda com o contexto** — em pé, deitado, apressado, com a outra
    mão. Isso aparece como aumento de FRR. É por isso que a decisão tem `step_up` em vez de só
    allow/deny, e por isso existe (desligada por padrão) a adaptação incremental do template.
-6. **Armazenamento é um arquivo JSON** (`server/data/db.json`), proposital para a PoC ser
-   inspecionável. A interface `Store` é o ponto de troca para Postgres.
-7. **Sem autenticação na API.** Qualquer um na mesma rede fala com ela. É PoC de laboratório,
-   não deploy.
+6. **O default é arquivo JSON**, proposital para a PoC ser inspecionável — e nesse modo
+   `consumeSession` não é atômico entre processos. Para piloto use `DATABASE_URL` (veja
+   *Persistência*).
+7. **Autenticação e cifra vêm desligadas por padrão.** Existem e são testadas (veja
+   *Segurança*), mas sem `API_KEYS` a API está aberta a quem estiver na mesma rede, e sem
+   `TEMPLATE_ENCRYPTION_KEY` os templates ficam em claro. Ligue as duas antes de coletar dado de
+   gente de verdade.
 
 ## Próximos passos sugeridos
 
@@ -165,4 +273,5 @@ npm run check      # typecheck do backend e do app + 113 testes
 3. Coleta piloto com ~30 pessoas × ~10 capturas → recalibrar → publicar curva ROC real.
 4. Decidir o papel do comportamental no produto: reforço de risco (step-up) tende a valer mais
    que fator de identidade isolado, e é onde o 1:N tem menos risco de falso positivo.
-5. Trocar JSON por Postgres, colocar autenticação na API e cifrar template em repouso.
+5. Postgres, autenticação e cifra em repouso já estão feitos. O que falta na infraestrutura:
+   chave de cifra num KMS em vez de variável de ambiente, e retenção com expurgo automático.

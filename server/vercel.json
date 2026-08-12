@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/[...path].ts": {
+      "maxDuration": 30,
+      "includeFiles": "src/db/migrations/**"
+    }
+  },
+  "rewrites": [
+    { "source": "/healthz", "destination": "/api/healthz" },
+    { "source": "/v1/:path*", "destination": "/api/v1/:path*" }
+  ]
+}

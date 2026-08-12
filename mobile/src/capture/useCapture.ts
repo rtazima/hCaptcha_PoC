@@ -29,8 +29,16 @@ export interface UseCaptureResult {
     value: string;
     reset: () => void;
   };
-  /** handlers do PanResponder da área de arraste */
+  /** handlers do PanResponder da área de arraste (usado na superfície nativa) */
   swipePanHandlers: ReturnType<typeof PanResponder.create>['panHandlers'];
+  /**
+   * Classifica um traço já coletado como toque ou arraste e registra.
+   * As superfícies de captura (nativa e web) só coletam pontos; a regra de
+   * classificação fica aqui, uma vez só.
+   */
+  noteStroke: (points: StrokePoint[]) => void;
+  /** relógio do recorder, em ms desde o início da captura */
+  now: () => number;
   /** handlers dos alvos de toque */
   tap: {
     onPressIn: (event: GestureResponderEvent) => void;
@@ -39,6 +47,11 @@ export interface UseCaptureResult {
   device: DeviceInfo;
   restart: () => void;
   motionAvailable: boolean;
+  /**
+   * No Safari do iOS os sensores só ligam depois de `requestPermission()`
+   * chamado a partir de um gesto do usuário. Em nativo é no-op.
+   */
+  requestMotionPermission: (() => Promise<void>) | null;
 }
 
 export function useCapture(): UseCaptureResult {
@@ -66,24 +79,33 @@ export function useCapture(): UseCaptureResult {
         return;
       }
 
-      Accelerometer.setUpdateInterval(MOTION_INTERVAL_MS);
-      if (gyroOk) {
-        Gyroscope.setUpdateInterval(MOTION_INTERVAL_MS);
+      // `isAvailableAsync` pode dizer que sim e `addListener` ainda estourar: no
+      // navegador o módulo web do expo-sensors não implementa os dois. Sem este
+      // try/catch o app cospe um erro de JS e a demo ganha cara de quebrada,
+      // ainda que a captura siga funcionando sem o grupo de movimento.
+      try {
+        Accelerometer.setUpdateInterval(MOTION_INTERVAL_MS);
+        if (gyroOk) {
+          Gyroscope.setUpdateInterval(MOTION_INTERVAL_MS);
+          subscriptions.push(
+            Gyroscope.addListener(({ x, y, z }) => {
+              gyro.gx = x;
+              gyro.gy = y;
+              gyro.gz = z;
+            }),
+          );
+        }
+        // o acelerômetro é o relógio: cada leitura dele emite uma amostra
+        // combinada com o último valor conhecido do giroscópio
         subscriptions.push(
-          Gyroscope.addListener(({ x, y, z }) => {
-            gyro.gx = x;
-            gyro.gy = y;
-            gyro.gz = z;
+          Accelerometer.addListener(({ x, y, z }) => {
+            recorder.noteMotion({ ax: x, ay: y, az: z, ...gyro });
           }),
         );
+      } catch (error) {
+        console.warn('sensores de movimento indisponíveis:', error);
+        setMotionAvailable(false);
       }
-      // o acelerômetro é o relógio: cada leitura dele emite uma amostra
-      // combinada com o último valor conhecido do giroscópio
-      subscriptions.push(
-        Accelerometer.addListener(({ x, y, z }) => {
-          recorder.noteMotion({ ax: x, ay: y, az: z, ...gyro });
-        }),
-      );
     })();
 
     return () => {
@@ -156,6 +178,25 @@ export function useCapture(): UseCaptureResult {
   }, [recorder]);
 
   // ---- arraste -----------------------------------------------------------
+  const noteStroke = useCallback(
+    (stroke: StrokePoint[]) => {
+      if (stroke.length < 3) return;
+      const first = stroke[0];
+      const last = stroke[stroke.length - 1];
+      const travelled = Math.hypot(last.x - first.x, last.y - first.y);
+      if (travelled < TAP_THRESHOLD) {
+        // dedo encostou e saiu: é toque, não arraste
+        recorder.noteTap(first.x, first.y, last.t - first.t, first.t);
+      } else {
+        recorder.noteGesture(stroke);
+      }
+      refresh();
+    },
+    [recorder, refresh],
+  );
+
+  const now = useCallback(() => recorder.now(), [recorder]);
+
   const strokeRef = useRef<StrokePoint[]>([]);
   const swipePanResponder = useMemo(
     () =>
@@ -171,23 +212,13 @@ export function useCapture(): UseCaptureResult {
         onPanResponderRelease: () => {
           const stroke = strokeRef.current;
           strokeRef.current = [];
-          if (stroke.length < 3) return;
-          const first = stroke[0];
-          const last = stroke[stroke.length - 1];
-          const travelled = Math.hypot(last.x - first.x, last.y - first.y);
-          if (travelled < TAP_THRESHOLD) {
-            // dedo encostou e saiu: é toque, não arraste
-            recorder.noteTap(first.x, first.y, last.t - first.t, first.t);
-          } else {
-            recorder.noteGesture(stroke);
-          }
-          refresh();
+          noteStroke(stroke);
         },
         onPanResponderTerminate: () => {
           strokeRef.current = [];
         },
       }),
-    [recorder, refresh],
+    [noteStroke, recorder],
   );
 
   // ---- toques ------------------------------------------------------------
@@ -224,15 +255,37 @@ export function useCapture(): UseCaptureResult {
     setCounts(recorder.counts());
   }, [recorder, resetTyping]);
 
+  /**
+   * Só existe na web/iOS: a API DeviceMotionEvent exige consentimento vindo de
+   * um gesto. Devolve null onde não se aplica, para a UI não mostrar um botão
+   * inútil.
+   */
+  const requestMotionPermission = useMemo(() => {
+    const DME = (globalThis as { DeviceMotionEvent?: { requestPermission?: () => Promise<string> } })
+      .DeviceMotionEvent;
+    if (typeof DME?.requestPermission !== 'function') return null;
+    return async () => {
+      try {
+        const result = await DME.requestPermission!();
+        setMotionAvailable(result === 'granted');
+      } catch {
+        setMotionAvailable(false);
+      }
+    };
+  }, []);
+
   return {
     recorder,
     counts,
     typing: { onKeyPress, onChangeText, value: text, reset: resetTyping },
     swipePanHandlers: swipePanResponder.panHandlers,
+    noteStroke,
+    now,
     tap: { onPressIn, onPressOut },
     device,
     restart,
     motionAvailable,
+    requestMotionPermission,
   };
 }
 

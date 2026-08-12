@@ -1,17 +1,41 @@
 # API
 
-Base: `http://localhost:8787`. Sem autenticação — é PoC de laboratório.
+Base: `http://localhost:8787`.
 Os exemplos usam `HCAPTCHA_MODE=mock` (token `mock:<risco>`); em `test`/`live` o token vem do
 SDK no app.
 
 Erros seguem sempre `{ "error": "codigo_estavel", "message": "…", "details": … }`.
 
+## Autenticação
+
+Sem `API_KEYS` configurado a API fica **aberta** (o servidor avisa no boot). Com chaves
+configuradas, tudo menos `/healthz` exige:
+
+```bash
+curl -H "Authorization: Bearer $API_KEY" localhost:8787/v1/users
+curl -H "x-api-key: $API_KEY"           localhost:8787/v1/users   # equivalente
+```
+
+Sem chave ou com chave errada: **401 `unauthorized`**. Várias chaves separadas por vírgula
+permitem rotação sem downtime. `/healthz` fica aberto de propósito, para o cliente descobrir
+que precisa de chave — ele informa *se* há autenticação, nunca *qual* é a chave.
+
 ## `GET /healthz`
 
 ```bash
 curl -s localhost:8787/healthz
-# {"ok":true,"featureVersion":1,"captchaMode":"mock","users":3,"uptimeSec":41}
 ```
+
+```json
+{
+  "ok": true, "featureVersion": 1, "captchaMode": "mock", "users": 3, "uptimeSec": 41,
+  "storage": "postgres", "authRequired": true, "encryptionAtRest": true
+}
+```
+
+Única rota que nunca exige chave. `authRequired`, `encryptionAtRest` e `storage`
+(`json` | `memory` | `postgres`) existem para o cliente mostrar o estado real da instalação — o app
+usa isso para avisar quando os templates estão sendo gravados em claro.
 
 ## `GET /v1/config`
 
@@ -143,6 +167,19 @@ curl -sX POST localhost:8787/v1/identify -H 'content-type: application/json' \
 | `DELETE /v1/users/:id` | apaga a pessoa e a remove da galeria (204; 404 se não existir) |
 | `GET /v1/audit?limit=50` | últimas decisões: tipo, decisão, similaridade, risco, motivos |
 | `POST /v1/admin/reset` | zera a base. Em modo `live` exige o header `x-confirm-reset: yes` |
+
+Todas exigem a chave de API quando `API_KEYS` está configurado.
+
+## Erros de infraestrutura
+
+| código | HTTP | quando |
+|---|---|---|
+| `unauthorized` | 401 | chave de API ausente ou inválida |
+| `encryption_error` | 500 | dado cifrado ilegível em tempo de execução (chave trocada) |
+
+Chave de cifra errada no **boot** não vira erro HTTP: o servidor não sobe, com mensagem
+explícita. Subir com a base aparentemente vazia seria pior — o próximo cadastro sobrescreveria
+os dados que ainda estão lá, cifrados.
 
 ## Limites de payload
 
