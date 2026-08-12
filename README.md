@@ -65,6 +65,13 @@ Sem `.env`, o backend sobe com as **chaves públicas de teste do hCaptcha**
 desafiam e não devolvem `score`**: o risco exibido no app aparecerá marcado como *derivado*.
 Para exercitar biometria comportamental de verdade, veja [docs/hcaptcha.md](docs/hcaptcha.md).
 
+### Mostrar para outras pessoas
+
+Rodar na sua Wi-Fi cobre quem está do seu lado. Para qualquer pessoa, de qualquer
+rede, [docs/demo.md](docs/demo.md) tem três rotas (túnel em 15 min, deploy + APK em ~1h), o
+`render.yaml`/`Dockerfile` prontos, e — importante — o checklist do que **não é opcional** quando
+outras pessoas se cadastram: cifra ligada, API fechada, consentimento e expurgo depois.
+
 ### Roteiro de teste no celular
 
 O que **dá** para verificar com as chaves de teste: cadastro real, 1:1, 1:N, rejeição de impostor,
@@ -220,6 +227,7 @@ npm run check      # typecheck do backend e do app + 197 testes
 | [docs/arquitetura.md](docs/arquitetura.md) | pipeline completo: features, template, matching, decisão, antirreplay |
 | [docs/hcaptcha.md](docs/hcaptcha.md) | invisible × passive, chaves, `/siteverify`, `rqdata`, o que dá e o que não dá |
 | [docs/api.md](docs/api.md) | endpoints com exemplos de `curl` |
+| [docs/demo.md](docs/demo.md) | como mostrar para outras pessoas: LAN, túnel, deploy + APK |
 | [docs/privacidade.md](docs/privacidade.md) | LGPD: dado biométrico é sensível — o que isso exige |
 
 ## Limitações (leia antes de apresentar)

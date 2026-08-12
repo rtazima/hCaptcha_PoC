@@ -1,0 +1,44 @@
+{
+  "cli": {
+    "version": ">= 12.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "//": [
+      "EXPO_PUBLIC_API_URL é embutida no bundle em tempo de build: troque pela URL",
+      "do seu backend antes de gerar o pacote. Se esquecer, o app abre e dá para",
+      "corrigir a URL na tela inicial — mas cada pessoa teria de digitar.",
+      "EXPO_PUBLIC_API_KEY também fica visível no bundle. Para uma demo isso é",
+      "aceitável; troque a chave depois (API_KEYS aceita várias, então dá para",
+      "rotacionar sem derrubar nada)."
+    ],
+    "demo-android": {
+      "//": "APK avulso: qualquer pessoa instala pelo link, sem loja e sem conta Apple",
+      "developmentClient": false,
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://TROQUE-PELA-SUA-URL",
+        "EXPO_PUBLIC_API_KEY": ""
+      }
+    },
+    "demo-ios": {
+      "//": [
+        "iOS exige conta paga da Apple (US$ 99/ano) e distribuição por TestFlight",
+        "ou provisionamento ad-hoc com os UDIDs dos aparelhos. É o caminho caro;",
+        "para uma primeira demo, Expo Go ou o APK de Android resolvem."
+      ],
+      "developmentClient": false,
+      "distribution": "internal",
+      "ios": {
+        "simulator": false
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://TROQUE-PELA-SUA-URL",
+        "EXPO_PUBLIC_API_KEY": ""
+      }
+    }
+  }
+}

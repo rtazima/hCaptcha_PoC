@@ -1,0 +1,65 @@
+# Blueprint de deploy do backend (Render). Um arquivo, um clique.
+#
+# Escolhi Render por ser o caminho mais curto entre "PoC no notebook" e "URL
+# HTTPS que outras pessoas abrem": Postgres gerenciado no mesmo blueprint e
+# HTTPS automático — que o iOS exige, e que um IP de LAN não tem.
+#
+# Não é endosso: Fly.io, Railway ou um container no ECS servem igual. O que
+# importa é o Dockerfile em server/ e as variáveis abaixo.
+#
+# Como usar:
+#   1. Render → New → Blueprint → aponte para este repositório
+#   2. Ao criar, defina os dois segredos marcados como sync:false
+#   3. A URL pública sai no painel; use-a em EXPO_PUBLIC_API_URL no app
+#
+# ATENÇÃO: uma API pública que coleta biometria comportamental de outras pessoas
+# não é um detalhe técnico. Veja docs/demo.md antes — consentimento, cifra
+# ligada e expurgo depois da demo.
+
+services:
+  - type: web
+    name: hcaptcha-poc-api
+    runtime: docker
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: PORT
+        value: 8787
+
+      # Postgres gerenciado, criado no bloco `databases` abaixo
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hcaptcha-poc-db
+          property: connectionString
+
+      # --- segredos: preencha no painel, não aqui -----------------------
+      # openssl rand -hex 24   (feche a API; sem isto qualquer um na internet
+      # cadastra e lista as pessoas)
+      - key: API_KEYS
+        sync: false
+      # openssl rand -base64 32   (cifra os templates em repouso)
+      # Guarde fora do Render também: perder a chave = perder os cadastros.
+      - key: TEMPLATE_ENCRYPTION_KEY
+        sync: false
+
+      # --- hCaptcha -----------------------------------------------------
+      # `test` usa as chaves públicas: valida o encanamento, mas o risco vem
+      # DERIVADO, não medido. Troque para `live` com sitekey Enterprise
+      # Passive/Invisible quando tiver um.
+      - key: HCAPTCHA_MODE
+        value: test
+      - key: HCAPTCHA_SITEKEY
+        sync: false
+      - key: HCAPTCHA_SECRET
+        sync: false
+
+      # ciclo de demo mais curto: 3 capturas em vez de 5
+      - key: ENROLL_SAMPLES_REQUIRED
+        value: 3
+
+databases:
+  - name: hcaptcha-poc-db
+    plan: free
+    postgresMajorVersion: '16'

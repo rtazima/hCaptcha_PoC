@@ -24,9 +24,20 @@ export interface AppliedMigration {
 }
 
 export function listMigrationFiles(dir = MIGRATIONS_DIR): string[] {
-  return readdirSync(dir)
-    .filter((file) => file.endsWith('.sql'))
-    .sort();
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    // acontece se o build não copiou os .sql para dist/ — o tsc só emite TS.
+    // Falhar aqui com o caminho na mensagem é o que torna isso diagnosticável.
+    throw new Error(
+      `diretório de migrações não encontrado: ${dir}. ` +
+        'Se este é um build compilado, rode `npm run build` (que copia os .sql).',
+    );
+  }
+  const files = entries.filter((file) => file.endsWith('.sql')).sort();
+  if (files.length === 0) throw new Error(`nenhuma migração .sql em ${dir}`);
+  return files;
 }
 
 export async function migrate(pool: Pool, dir = MIGRATIONS_DIR): Promise<AppliedMigration[]> {
