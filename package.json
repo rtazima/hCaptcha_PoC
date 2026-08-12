@@ -11,6 +11,7 @@
     "typecheck": "npm run typecheck --prefix server && npm run typecheck --prefix mobile",
     "simulate": "cd server && npx tsx src/simulator/run.ts",
     "sync:contract": "npm run sync:contract --prefix server",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "build:web": "cd mobile && npx expo export --clear --platform web --output-dir dist-web"
   }
 }

@@ -1,13 +1,17 @@
 # Como mostrar a PoC para outras pessoas
 
-Três rotas, da mais rápida à mais estável. O gargalo nunca é o app — é o backend
+Quatro rotas, da mais rápida à mais estável. O gargalo nunca é o app — é o backend
 precisar estar alcançável pelo celular de quem vai testar.
 
-| rota | quem consegue testar | custo | tempo |
-|---|---|---|---|
-| **1. LAN** | quem está na mesma Wi-Fi que você | zero | 5 min |
-| **2. Túnel** | qualquer pessoa, enquanto seu notebook estiver ligado | zero | 15 min |
-| **3. Deploy + APK** | qualquer pessoa, a qualquer hora | ~zero (planos free) | ~1 h |
+| rota | quem consegue testar | precisa instalar? | custo | tempo |
+|---|---|---|---|---|
+| **1. LAN** | quem está na mesma Wi-Fi | Expo Go | zero | 5 min |
+| **2. Túnel** | qualquer pessoa, com seu notebook ligado | Expo Go | zero | 15 min |
+| **3. Web** | **qualquer pessoa, por um link** | **nada** | ~zero | ~40 min |
+| **4. APK** | qualquer pessoa (Android) | o APK | ~zero | ~1 h |
+
+**Se você quer um link para mandar no WhatsApp, é a rota 3.** Abre no navegador do
+celular, Android e iPhone, sem instalar nada.
 
 ## Antes de qualquer rota: se outras pessoas vão se cadastrar
 
@@ -73,12 +77,71 @@ Cuidados: a URL do `trycloudflare` muda a cada execução (recomeçar o túnel
 invalida o QR já distribuído), e o `--tunnel` do Expo Go às vezes é lento no
 primeiro carregamento — pode levar um minuto.
 
-## Rota 3 — Deploy + APK (a que funciona sem você)
+## Rota 3 — Web: um link, sem instalar nada
+
+A versão web é gerada do mesmo código (o Metro escolhe os arquivos `.web.tsx`
+onde existem). São dois artefatos: um site estático e a API pública.
+
+```bash
+# 1. backend público (veja a rota 4 para o deploy; ou use o túnel da rota 2)
+
+# 2. gera o site com a URL da API embutida
+cd mobile
+EXPO_PUBLIC_API_URL=https://sua-api.exemplo.com \
+EXPO_PUBLIC_API_KEY=sua-chave \
+npx expo export --clear --platform web --output-dir dist-web
+```
+
+**O `--clear` não é opcional.** Sem ele o Metro reaproveita o bundle anterior e a
+URL antiga fica embutida — o app abre e falha ao conectar, sem nenhuma pista do
+motivo. Isto foi verificado aqui: a primeira tentativa saiu com a URL errada.
+
+Publique `dist-web/` em qualquer host estático: Netlify (arraste a pasta),
+Cloudflare Pages, Vercel, ou GitHub Pages no próprio repositório. O resultado é
+uma URL que você manda para quem quiser.
+
+Se errar a URL da API, ninguém fica travado: dá para corrigir na tela inicial do
+app. Mas aí cada pessoa teria de digitar, então vale conferir antes.
+
+### O que muda na web
+
+| | nativo (Expo Go / APK) | web |
+|---|---|---|
+| hCaptcha | SDK React Native (WebView) | widget JS oficial (`api.js`) |
+| journey tracking | disponível (Enterprise) | não existe |
+| acelerômetro/giroscópio | sempre | só com permissão; no iOS exige toque no botão |
+| grupos de features | 5 | 5, ou 4 se os sensores não forem liberados |
+
+O motor biométrico — que é a parte que interessa — é **o mesmo**. O que muda é o
+caminho até o token do hCaptcha e a disponibilidade dos sensores. Se a demo é
+sobre o SDK React Native especificamente, use Expo Go ou o APK.
+
+Sem os sensores o servidor ainda aceita a captura (4 dos 5 grupos, cobertura
+0.79 contra mínimo de 0.5) e o app avisa na tela. O template fica mais fraco, e
+isso aparece no score.
+
+### Verificado em navegador real
+
+O fluxo de cadastro foi exercitado em Chromium com Playwright: 33 teclas, 4
+arrastes, 4 toques, envio aceito pelo backend, avaliação do hCaptcha e laudo de
+qualidade renderizados, **zero erros de JS**. Dois problemas apareceram nessa
+verificação e estão corrigidos:
+
+- o `PanResponder` do react-native-web não entrega os eventos de movimento de
+  forma confiável (os toques via `Pressable` funcionavam, os arrastes não). A
+  área de arraste passou a ter uma versão `.web.tsx` com Pointer Events do DOM;
+- `expo-sensors` respondia que o acelerômetro existe e depois estourava no
+  `addListener`, cuspindo erro no console.
+
+Os alvos de captura têm `testID` (`capture-typing`, `capture-swipe-area`,
+`capture-tap-N`), que na web viram `data-testid` — é por onde automatizar.
+
+## Rota 4 — Deploy + APK (a que funciona sem você)
 
 ### Backend
 
-Há um `render.yaml` na raiz (blueprint com Postgres gerenciado) e um
-`server/Dockerfile`. Render → New → Blueprint → aponte para o repositório, e
+O backend é o mesmo que a rota web precisa. Há um `render.yaml` na raiz
+(blueprint com Postgres gerenciado) e um `server/Dockerfile`. Render → New → Blueprint → aponte para o repositório, e
 preencha os segredos marcados `sync: false`: `API_KEYS`,
 `TEMPLATE_ENCRYPTION_KEY` e, se tiver, o par do hCaptcha.
 

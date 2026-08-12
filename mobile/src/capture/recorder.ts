@@ -142,14 +142,23 @@ export class CaptureRecorder {
     return this.pasteEvents;
   }
 
-  /** true quando a captura já atende aos mínimos que o servidor exige. */
+/**
+   * true quando a captura já atende aos mínimos que o servidor exige.
+   *
+   * Movimento é exigido **apenas se a plataforma estiver entregando amostras**.
+   * Sem essa ressalva o app travaria onde não há acelerômetro acessível — no
+   * Safari do iOS, por exemplo, que só libera sensores após permissão explícita.
+   * O servidor concorda: sem o grupo `motion` a cobertura cai de 1.0 para 0.79,
+   * ainda acima do mínimo, e o template usa 4 dos 5 grupos.
+   */
   isComplete(): boolean {
     const c = this.counts();
+    const motionOk = c.motion === 0 || c.motion >= CAPTURE_MINIMUMS.motion;
     return (
       c.keystrokes >= CAPTURE_MINIMUMS.keystrokes &&
       c.taps >= CAPTURE_MINIMUMS.taps &&
       c.gestures >= CAPTURE_MINIMUMS.gestures &&
-      c.motion >= CAPTURE_MINIMUMS.motion &&
+      motionOk &&
       c.elapsedMs >= CAPTURE_MINIMUMS.durationMs
     );
   }

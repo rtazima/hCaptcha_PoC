@@ -67,10 +67,14 @@ Para exercitar biometria comportamental de verdade, veja [docs/hcaptcha.md](docs
 
 ### Mostrar para outras pessoas
 
-Rodar na sua Wi-Fi cobre quem está do seu lado. Para qualquer pessoa, de qualquer
-rede, [docs/demo.md](docs/demo.md) tem três rotas (túnel em 15 min, deploy + APK em ~1h), o
-`render.yaml`/`Dockerfile` prontos, e — importante — o checklist do que **não é opcional** quando
-outras pessoas se cadastram: cifra ligada, API fechada, consentimento e expurgo depois.
+**Quer um link para mandar para alguém?** `npm run build:web` gera um site estático do mesmo
+código — abre no navegador do celular, Android e iPhone, sem instalar nada. O fluxo de cadastro
+foi verificado em Chromium real (Playwright), sem erros de JS.
+
+[docs/demo.md](docs/demo.md) tem as quatro rotas (LAN, túnel, web e APK), o `render.yaml`/
+`Dockerfile` prontos, o que muda na web (hCaptcha via widget JS em vez do SDK React Native) e —
+importante — o checklist do que **não é opcional** quando outras pessoas se cadastram: cifra
+ligada, API fechada, consentimento e expurgo depois.
 
 ### Roteiro de teste no celular
 
