@@ -65,6 +65,29 @@ Sem `.env`, o backend sobe com as **chaves públicas de teste do hCaptcha**
 desafiam e não devolvem `score`**: o risco exibido no app aparecerá marcado como *derivado*.
 Para exercitar biometria comportamental de verdade, veja [docs/hcaptcha.md](docs/hcaptcha.md).
 
+### Roteiro de teste no celular
+
+O que **dá** para verificar com as chaves de teste: cadastro real, 1:1, 1:N, rejeição de impostor,
+qualidade de captura e a trilha de auditoria. O que **não** dá: risco do hCaptcha de verdade — com
+sitekey de teste ele vem marcado como *derivado*.
+
+1. `npm run dev` — anote o IP que ele imprime.
+2. No celular (mesma Wi-Fi), Expo Go lendo o QR de `npm run app`.
+3. Se a URL da API estiver errada, corrija **na tela inicial** do app, sem recompilar.
+4. **Cadastro**: 5 capturas suas. Digite a frase no seu ritmo normal — capturar você "se comportando
+   estranho" envenena o template.
+5. **1:1 com você mesmo**: deve dar `allow`.
+6. **1:1 com outra pessoa escolhendo o seu identificador**: é a demonstração que importa. Sem uma
+   segunda pessoa você não vê rejeição de impostor.
+7. **1:N**: deve te colocar em 1º com margem folgada.
+
+Para um ciclo mais rápido, `ENROLL_SAMPLES_REQUIRED=3` reduz o cadastro de 5 para 3 capturas — com
+template mais fraco, o que é o esperado e aparece no score.
+
+Se a rede corporativa isolar os clientes (o celular não alcança o IP do notebook), exponha a API por
+um túnel e aponte `EXPO_PUBLIC_API_URL` para a URL pública. O `--tunnel` do Expo resolve só o
+bundler, não a API.
+
 ## Os três fluxos no app
 
 1. **Cadastro** — 5 capturas da mesma tarefa (digitar uma frase fixa, arrastar, tocar nos

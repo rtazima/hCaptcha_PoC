@@ -7,9 +7,9 @@
     "setup": "npm install --prefix server && npm install --prefix mobile",
     "dev": "npm run dev --prefix server",
     "app": "npm start --prefix mobile",
-    "test": "npm test --prefix server",
+    "test": "cd server && npx vitest run",
     "typecheck": "npm run typecheck --prefix server && npm run typecheck --prefix mobile",
-    "simulate": "npm run simulate --prefix server",
+    "simulate": "cd server && npx tsx src/simulator/run.ts",
     "sync:contract": "npm run sync:contract --prefix server",
     "check": "npm run typecheck && npm test"
   }
