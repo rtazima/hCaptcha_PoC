@@ -11,6 +11,11 @@ server/data/
 .env.local
 !.env.example
 
+# Vercel: .vercel/ é o vínculo local com o projeto; o outro guarda a chave de
+# API e a chave de cifra geradas por scripts/vercel-setup.sh
+.vercel/
+.vercel-demo-secrets
+
 # Expo
 .expo/
 web-build/

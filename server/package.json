@@ -16,7 +16,8 @@
     "test:watch": "vitest",
     "simulate": "tsx src/simulator/run.ts",
     "sync:contract": "node scripts/sync-contract.mjs",
-    "db:migrate": "tsx src/db/cli-migrate.ts"
+    "db:migrate": "tsx src/db/cli-migrate.ts",
+    "dev:serverless": "tsx scripts/vercel-sim.ts"
   },
   "dependencies": {
     "cors": "^2.8.6",

@@ -139,9 +139,34 @@ Os alvos de captura têm `testID` (`capture-typing`, `capture-swipe-area`,
 
 ## Rota 3b — Tudo na Vercel (site + API)
 
-A Vercel hospeda as duas partes. **Dois projetos, mesmo repositório**, ligados pela
-integração com o GitHub — assim cada push publica, e você não precisa gerar token
-nem instalar CLI.
+A Vercel hospeda as duas partes. **Dois projetos, mesmo repositório**.
+
+### O caminho de um comando
+
+```bash
+npm run deploy:vercel
+```
+
+`scripts/vercel-setup.sh` faz o processo inteiro: login, gera os segredos (na
+sua máquina, em `.vercel-demo-secrets`, fora do git), aplica as migrações, cria
+os dois projetos, define as variáveis, publica e confere o `/healthz` antes de
+imprimir o link. Rodar de novo é seguro — ele reaproveita os segredos e
+substitui as variáveis em vez de duplicá-las.
+
+Uma coisa ele não faz: **criar o banco**. A CLI da Vercel não expõe criação de
+storage, isso é painel. Tenha a connection string em mão (Vercel → Storage →
+Postgres, ou neon.tech direto) e passe em `DATABASE_URL` ou responda ao prompt.
+
+O script é coberto por `npm run test:deploy`, que o executa contra uma CLI da
+Vercel dublada: verifica os segredos, as seis variáveis da API, o elo que mais
+quebra (a URL embutida no site tem de ser a do deploy da API), a idempotência da
+segunda execução e o caso em que a API sobe sem Postgres — aí ele aborta em vez
+de publicar um site apontando para uma API morta.
+
+### Ou pelo painel, ligando ao GitHub
+
+Preferível se a demo for durar: cada push publica sozinho, e nenhuma credencial
+sai da sua conta.
 
 ### Projeto 1: a API
 
@@ -216,12 +241,24 @@ juntar os dois `vercel.json` num monorepo e resolver os imports entre `mobile/` 
 `server/` — mais configuração para o mesmo resultado visível. Comece com dois
 projetos; se a demo virar piloto, vale consolidar.
 
-> **Nota de verificação:** os arquivos `vercel.json`, a função serverless e o
-> guard de Postgres foram escritos e passam por typecheck, mas **o deploy na
-> Vercel não foi executado** — não há credencial da conta neste ambiente. O que
-> foi testado no ar é o mesmo código rodando em Node local e em container, com
-> Postgres real. Se o primeiro deploy falhar, o log da função é o lugar: erro de
-> boot vira uma resposta JSON `boot_error` com a mensagem original.
+> **Nota de verificação.** O **deploy na Vercel não foi executado**: no ambiente
+> onde este código foi escrito, `api.vercel.com` é recusado pela política de
+> egresso (`CONNECT 403`), então não houve como criar projeto nem publicar.
+>
+> O que *foi* verificado, e como: o caminho serverless roda localmente via
+> `npm run dev:serverless`, que aplica os mesmos rewrites do `vercel.json` e
+> chama a função de `api/[...path].ts`. Contra um Postgres real, com `VERCEL=1` e
+> apenas `POSTGRES_URL` definida (o nome que a integração Neon injeta, para
+> provar o fallback), o simulador cadastrou 8 pessoas, rodou 320 verificações
+> 1:1, 1:N e a fusão com risco — e o banco terminou com 40 de 40 vetores
+> cifrados e nenhum em claro. Os dois modos de falha que mais custam um deploy
+> vermelho também foram exercitados: sem banco e com chave de cifra errada, o
+> boot responde `boot_error` com a mensagem exata do problema, não um 500 opaco.
+>
+> O que continua sem verificação real: o bundling da função pela plataforma, o
+> cold start, e a chamada de verdade ao `api.hcaptcha.com/siteverify` — este
+> ambiente também bloqueia esse destino, então o primeiro deploy é a primeira vez
+> que aquele encanamento roda contra o serviço real.
 
 ## Rota 4 — Deploy + APK (a que funciona sem você)
 

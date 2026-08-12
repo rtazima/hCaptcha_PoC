@@ -12,6 +12,9 @@
     "simulate": "cd server && npx tsx src/simulator/run.ts",
     "sync:contract": "npm run sync:contract --prefix server",
     "check": "npm run typecheck && npm test",
-    "build:web": "cd mobile && npx expo export --clear --platform web --output-dir dist-web"
+    "build:web": "cd mobile && npx expo export --clear --platform web --output-dir dist-web",
+    "deploy:vercel": "bash scripts/vercel-setup.sh",
+    "test:deploy": "bash scripts/vercel-setup.test.sh",
+    "dev:serverless": "cd server && npm run dev:serverless"
   }
 }

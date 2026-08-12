@@ -18,6 +18,9 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  // `api/` é a entrada serverless (Vercel). Fica fora do tsconfig.build.json —
+  // quem compila aquela função é a própria plataforma — mas precisa ser
+  // verificada aqui, senão um erro de tipo na entrada só aparece no deploy.
+  "include": ["src/**/*.ts", "tests/**/*.ts", "api/**/*.ts", "scripts/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }
