@@ -8,6 +8,7 @@ precisar estar alcançável pelo celular de quem vai testar.
 | **1. LAN** | quem está na mesma Wi-Fi | Expo Go | zero | 5 min |
 | **2. Túnel** | qualquer pessoa, com seu notebook ligado | Expo Go | zero | 15 min |
 | **3. Web** | **qualquer pessoa, por um link** | **nada** | ~zero | ~40 min |
+| **3b. Web na Vercel** | idem, com deploy automático a cada push | **nada** | ~zero | ~30 min |
 | **4. APK** | qualquer pessoa (Android) | o APK | ~zero | ~1 h |
 
 **Se você quer um link para mandar no WhatsApp, é a rota 3.** Abre no navegador do
@@ -135,6 +136,92 @@ verificação e estão corrigidos:
 
 Os alvos de captura têm `testID` (`capture-typing`, `capture-swipe-area`,
 `capture-tap-N`), que na web viram `data-testid` — é por onde automatizar.
+
+## Rota 3b — Tudo na Vercel (site + API)
+
+A Vercel hospeda as duas partes. **Dois projetos, mesmo repositório**, ligados pela
+integração com o GitHub — assim cada push publica, e você não precisa gerar token
+nem instalar CLI.
+
+### Projeto 1: a API
+
+| campo | valor |
+|---|---|
+| Root Directory | `server` |
+| Framework Preset | Other |
+
+O `server/vercel.json` já está no repositório: declara a função catch-all
+`api/[...path].ts` e reescreve `/v1/*` e `/healthz` para ela. Assim a URL base da
+API é a origem crua (`https://sua-api.vercel.app`), sem `/api` no meio.
+
+**Postgres é obrigatório aqui.** Em função serverless o disco é efêmero: cada
+invocação pode ser outro processo, então o armazenamento em arquivo gravaria,
+responderia 200 e perderia tudo na chamada seguinte. O código **recusa subir**
+nessa combinação, de propósito — a mensagem no log diz exatamente isso. Adicione
+o Postgres da Vercel (Neon) no projeto; ele injeta `POSTGRES_URL`, que o backend
+já reconhece.
+
+Variáveis a definir no painel:
+
+```
+POSTGRES_URL              (vem da integração Neon; não precisa digitar)
+API_KEYS                  openssl rand -hex 24
+TEMPLATE_ENCRYPTION_KEY   openssl rand -base64 32
+HCAPTCHA_MODE             test
+ENROLL_SAMPLES_REQUIRED   3
+SKIP_BOOT_MIGRATIONS      1
+```
+
+Antes do primeiro deploy, aplique o schema uma vez da sua máquina, apontando para
+o banco da Vercel:
+
+```bash
+cd server
+DATABASE_URL='postgres://...da-vercel...' npm run db:migrate
+```
+
+Por que não migrar no boot: a função é empacotada por um bundler, e os arquivos
+`.sql` podem não acompanhar o bundle. Migrar fora de banda também é a prática
+correta em serverless — você não quer uma migração disputada por dez cold starts.
+Se preferir tentar no boot, tire `SKIP_BOOT_MIGRATIONS` e confira o log: a
+mensagem de erro diz o caminho exato onde os `.sql` foram procurados.
+
+### Projeto 2: o site
+
+| campo | valor |
+|---|---|
+| Root Directory | `mobile` |
+| Framework Preset | Other |
+
+O `mobile/vercel.json` já traz o build (`expo export --clear`) e o diretório de
+saída. Defina duas variáveis, com a URL do projeto 1:
+
+```
+EXPO_PUBLIC_API_URL   https://sua-api.vercel.app
+EXPO_PUBLIC_API_KEY   a mesma chave de API_KEYS
+```
+
+São `EXPO_PUBLIC_*` de propósito: precisam ser embutidas no bundle em tempo de
+build. Consequência: **a chave de API fica visível para quem abrir o app**.
+Aceitável numa demo; rotacione depois (`API_KEYS` aceita várias, separadas por
+vírgula, então dá para trocar sem derrubar nada).
+
+A URL do projeto 2 é o link que você manda para as pessoas.
+
+### Uma alternativa mais enxuta
+
+Dá para fazer **um projeto só**, com o site servido na raiz e a API em `/api/*`
+do mesmo domínio. Fica melhor: mesma origem, sem CORS, sem URL embutida. Exige
+juntar os dois `vercel.json` num monorepo e resolver os imports entre `mobile/` e
+`server/` — mais configuração para o mesmo resultado visível. Comece com dois
+projetos; se a demo virar piloto, vale consolidar.
+
+> **Nota de verificação:** os arquivos `vercel.json`, a função serverless e o
+> guard de Postgres foram escritos e passam por typecheck, mas **o deploy na
+> Vercel não foi executado** — não há credencial da conta neste ambiente. O que
+> foi testado no ar é o mesmo código rodando em Node local e em container, com
+> Postgres real. Se o primeiro deploy falhar, o log da função é o lugar: erro de
+> boot vira uma resposta JSON `boot_error` com a mensagem original.
 
 ## Rota 4 — Deploy + APK (a que funciona sem você)
 

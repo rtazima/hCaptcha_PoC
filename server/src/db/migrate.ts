@@ -14,7 +14,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Pool } from 'pg';
 
-const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'migrations');
+/**
+ * Diretório dos .sql. `MIGRATIONS_DIR` permite apontar para outro lugar quando o
+ * código é empacotado por um bundler que não carrega os .sql junto.
+ */
+const MIGRATIONS_DIR =
+  process.env.MIGRATIONS_DIR?.trim() ||
+  join(dirname(fileURLToPath(import.meta.url)), 'migrations');
 /** número arbitrário mas estável, só precisa não colidir com outros locks */
 const LOCK_ID = 828_713_001;
 

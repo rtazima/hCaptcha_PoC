@@ -13,6 +13,20 @@ export interface AppConfig {
   dataFile: string | null;
   /** definido => usa Postgres em vez do arquivo JSON */
   databaseUrl: string | null;
+  /** máximo de conexões no pool do Postgres */
+  pgPoolMax: number;
+  /**
+   * true em ambiente de função (Vercel, Lambda). Nesses lugares o sistema de
+   * arquivos é efêmero e cada invocação pode ser um processo novo, então o
+   * armazenamento em arquivo perderia dados sem avisar.
+   */
+  serverless: boolean;
+  /**
+   * Pula as migrações no boot. Em serverless o recomendado é migrar fora de
+   * banda (`npm run db:migrate`), porque a função é empacotada e os .sql podem
+   * não acompanhar o bundle.
+   */
+  skipBootMigrations: boolean;
   corsOrigin: string;
   captcha: {
     mode: CaptchaMode;
@@ -68,7 +82,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: num(env.PORT, 8787),
     host: env.HOST ?? '0.0.0.0',
     dataFile: env.DATA_FILE === 'memory' ? null : (env.DATA_FILE ?? 'data/db.json'),
-    databaseUrl: env.DATABASE_URL?.trim() || null,
+    // a integração Postgres da Vercel (Neon) injeta POSTGRES_URL, não DATABASE_URL
+    databaseUrl: env.DATABASE_URL?.trim() || env.POSTGRES_URL?.trim() || null,
+    // em serverless o default baixo evita esgotar as conexões do Postgres: cada
+    // instância da função mantém o seu próprio pool
+    pgPoolMax: num(env.PG_POOL_MAX, env.VERCEL || env.AWS_LAMBDA_FUNCTION_NAME ? 3 : 10),
+    serverless: Boolean(env.VERCEL || env.AWS_LAMBDA_FUNCTION_NAME),
+    skipBootMigrations: bool(env.SKIP_BOOT_MIGRATIONS, false),
     corsOrigin: env.CORS_ORIGIN ?? '*',
     captcha: {
       mode,

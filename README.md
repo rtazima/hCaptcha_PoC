@@ -71,7 +71,11 @@ Para exercitar biometria comportamental de verdade, veja [docs/hcaptcha.md](docs
 código — abre no navegador do celular, Android e iPhone, sem instalar nada. O fluxo de cadastro
 foi verificado em Chromium real (Playwright), sem erros de JS.
 
-[docs/demo.md](docs/demo.md) tem as quatro rotas (LAN, túnel, web e APK), o `render.yaml`/
+Na **Vercel** dá para hospedar site e API (dois projetos, integração Git, deploy a cada push) — os
+`vercel.json` já estão prontos, e lá o Postgres é obrigatório: em serverless o disco é efêmero e o
+backend recusa subir com armazenamento em arquivo, de propósito.
+
+[docs/demo.md](docs/demo.md) tem as rotas (LAN, túnel, web, Vercel e APK), os `render.yaml` e
 `Dockerfile` prontos, o que muda na web (hCaptcha via widget JS em vez do SDK React Native) e —
 importante — o checklist do que **não é opcional** quando outras pessoas se cadastram: cifra
 ligada, API fechada, consentimento e expurgo depois.
